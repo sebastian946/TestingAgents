@@ -1,7 +1,11 @@
 [project]
-name = "Testing Agents"
+name = "Testing_Agents"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.142.2",
+    "pydantic>=2.13.5",
+    "uvicorn>=0.54.0",
+]
