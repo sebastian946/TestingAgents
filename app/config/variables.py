@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     db_name: str
     db_port: int = 5432
     redis_port: int = 6379
+    redis_host: str = "localhost"
     endpoint: str
 
 settings = Settings()  # type: ignore[call-arg]  # values come from .env
