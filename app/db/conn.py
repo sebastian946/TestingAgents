@@ -18,7 +18,7 @@ class Base(DeclarativeBase):
 
 
 def get_db():
-    """Dependencia de FastAPI: una sesion por request, cerrada al terminar."""
+    """FastAPI dependency: one session per request, closed when it finishes."""
     db = local_session()
     try:
         yield db

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from db import db_crud
 from db.conn import get_db
 from models.models import JobCreate, JobRead, PageRead, ScenarioRead
+from security.ssrf import UnsafeURLError, validate_public_url
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -17,11 +18,16 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
     summary="Create a new job test execution",
 )
 def create_job(payload: JobCreate, db: Session = Depends(get_db)):
-    """Recibe la URL, guarda el job como `queued` y responde 202.
+    """Receive the URL, store the job as `queued` and respond 202.
 
-    El test NO se ejecuta aqui: lo procesara el worker (siguiente tarea del tablero).
+    The test is NOT run here: the worker will process it (next task on the board).
+    Responds 400 if the URL is not http/https or points to an internal network (anti-SSRF).
     """
-    return db_crud.create_job(db, url=str(payload.url))
+    try:
+        url = validate_public_url(payload.url)
+    except UnsafeURLError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return db_crud.create_job(db, url=url)
 
 
 @router.get(

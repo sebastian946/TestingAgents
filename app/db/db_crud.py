@@ -14,7 +14,7 @@ def _now() -> datetime:
 # ---------------------------------------------------------------- Jobs
 
 def create_job(db: Session, url: str) -> Job:
-    """POST /jobs: crea el job en estado QUEUED."""
+    """POST /jobs: create the job in QUEUED state."""
     job = Job(url=url, status=JobStatus.QUEUED)
     db.add(job)
     db.commit()
@@ -28,7 +28,7 @@ def get_job(db: Session, job_id: uuid.UUID) -> Job | None:
 
 
 def get_job_with_details(db: Session, job_id: uuid.UUID) -> Job | None:
-    """Job con sus paginas y escenarios cargados en una sola consulta."""
+    """Job with its pages and scenarios loaded in a single query."""
     stmt = (
         select(Job)
         .where(Job.id == job_id)
@@ -43,7 +43,7 @@ def list_jobs(db: Session, limit: int = 50, offset: int = 0) -> list[Job]:
 
 
 def mark_job_running(db: Session, job_id: uuid.UUID) -> Job | None:
-    """Worker: QUEUED -> RUNNING, guarda started_at."""
+    """Worker: QUEUED -> RUNNING, sets started_at."""
     job = db.get(Job, job_id)
     if job is None:
         return None
@@ -56,7 +56,7 @@ def mark_job_running(db: Session, job_id: uuid.UUID) -> Job | None:
 
 
 def mark_job_done(db: Session, job_id: uuid.UUID, report_path: str | None = None) -> Job | None:
-    """Worker: RUNNING -> DONE, guarda finished_at y la ruta del reporte."""
+    """Worker: RUNNING -> DONE, sets finished_at and the report path."""
     job = db.get(Job, job_id)
     if job is None:
         return None
@@ -70,7 +70,7 @@ def mark_job_done(db: Session, job_id: uuid.UUID, report_path: str | None = None
 
 
 def mark_job_failed(db: Session, job_id: uuid.UUID, error: str) -> Job | None:
-    """Worker: cualquier estado -> FAILED con mensaje legible (sin stack trace)."""
+    """Worker: any state -> FAILED with a readable message (no stack trace)."""
     job = db.get(Job, job_id)
     if job is None:
         return None
@@ -83,7 +83,7 @@ def mark_job_failed(db: Session, job_id: uuid.UUID, error: str) -> Job | None:
 
 
 def delete_job(db: Session, job_id: uuid.UUID) -> bool:
-    """Borra el job y, por cascade, sus paginas y escenarios."""
+    """Delete the job and, via cascade, its pages and scenarios."""
     job = db.get(Job, job_id)
     if job is None:
         return False
@@ -102,14 +102,14 @@ def create_page(
     page_type: str | None = None,
     screenshot_path: str | None = None,
 ) -> Page:
-    """Explorer: inserta la pagina e incrementa job.pages_crawled en la misma transaccion.
+    """Explorer: insert the page and increment job.pages_crawled in the same transaction.
 
-    Un commit por pagina: si el worker muere a mitad del crawl, lo ya explorado queda guardado
-    y el contador sigue coincidiendo con los registros.
+    One commit per page: if the worker dies mid-crawl, what was already explored stays saved
+    and the counter still matches the rows.
     """
     job = db.get(Job, job_id)
     if job is None:
-        raise ValueError(f"Job {job_id} no existe")
+        raise ValueError(f"Job {job_id} does not exist")
 
     page = Page(
         job_id=job_id,
@@ -119,7 +119,7 @@ def create_page(
         screenshot_path=screenshot_path,
     )
     db.add(page)
-    job.pages_crawled = Job.pages_crawled + 1  # UPDATE atomico en SQL, no lectura+escritura en Python
+    job.pages_crawled = Job.pages_crawled + 1  # atomic UPDATE in SQL, not read+write in Python
     db.commit()
     db.refresh(page)
     return page
@@ -135,7 +135,7 @@ def get_pages_by_job(db: Session, job_id: uuid.UUID) -> list[Page]:
 
 
 def update_page(db: Session, page_id: int, **fields) -> Page | None:
-    """Actualiza campos sueltos (title, page_type, screenshot_path) tras el crawl."""
+    """Update individual fields (title, page_type, screenshot_path) after the crawl."""
     page = db.get(Page, page_id)
     if page is None:
         return None
@@ -150,7 +150,7 @@ def update_page(db: Session, page_id: int, **fields) -> Page | None:
 # ----------------------------------------------------------- Scenarios
 
 def _next_scenario_number(db: Session, job_id: uuid.UUID) -> int:
-    """Siguiente numero libre para SC-XXX dentro del job."""
+    """Next free number for SC-XXX within the job."""
     stmt = select(Scenario.scenario_code).where(Scenario.job_id == job_id)
     codes = db.scalars(stmt).all()
     last = max((int(code.split("-")[1]) for code in codes), default=0)
@@ -158,16 +158,16 @@ def _next_scenario_number(db: Session, job_id: uuid.UUID) -> int:
 
 
 def create_scenarios(db: Session, job_id: uuid.UUID, page_id: int, scenarios: list[dict]) -> list[Scenario]:
-    """Designer: inserta los escenarios validados de una pagina y actualiza job.total_scenarios.
+    """Designer: insert a page's validated scenarios and update job.total_scenarios.
 
     Cada dict: {"title": str, "steps": list, "expected_result": str, "priority": str?, "category": str?}
-    Los codigos SC-001, SC-002... son unicos dentro del job.
+    Codes SC-001, SC-002... are unique within the job.
     """
     job = db.get(Job, job_id)
     if job is None:
-        raise ValueError(f"Job {job_id} no existe")
+        raise ValueError(f"Job {job_id} does not exist")
     if db.get(Page, page_id) is None:
-        raise ValueError(f"Page {page_id} no existe")
+        raise ValueError(f"Page {page_id} does not exist")
 
     start = _next_scenario_number(db, job_id)
 

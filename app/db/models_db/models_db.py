@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.conn import Base
 
-# JSONB en PostgreSQL; JSON generico en otros motores (p. ej. SQLite en tests)
+# JSONB on PostgreSQL; generic JSON on other engines (e.g. SQLite in tests)
 JSONType = JSON().with_variant(JSONB, "postgresql")
 
 

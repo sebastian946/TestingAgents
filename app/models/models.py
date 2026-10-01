@@ -2,13 +2,14 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field
 
 from db.models_db.models_db import JobStatus
 
 
 class JobCreate(BaseModel):
-    url: HttpUrl = Field(..., description="The url for the test execution")
+    # str rather than HttpUrl: security.ssrf does the validation so we can return 400 (not 422)
+    url: str = Field(..., max_length=2048, description="The url for the test execution")
 
 
 class JobRead(BaseModel):

@@ -1,12 +1,12 @@
 # app — backend (FastAPI + SQLAlchemy)
 
-La documentación completa (puesta en marcha, variables de entorno, API, convenciones)
-está en el [README de la raíz del repositorio](../README.md).
+The full documentation (setup, environment variables, API, conventions) is in the
+[repository root README](../README.md).
 
-Comandos rápidos, desde esta carpeta:
+Quick commands, from this folder:
 
 ```powershell
-uv sync                          # dependencias
-uv run python -m db.init_db      # crear tablas
-uv run uvicorn main:app --reload # API en http://127.0.0.1:8000/docs
+uv sync                          # dependencies
+uv run python -m db.init_db      # create tables
+uv run uvicorn main:app --reload # API at http://127.0.0.1:8000/docs
 ```
