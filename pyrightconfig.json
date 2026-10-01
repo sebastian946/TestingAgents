@@ -1,0 +1,7 @@
+{
+  "venvPath": "app",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "extraPaths": ["app"],
+  "exclude": ["**/.venv", "**/node_modules", "**/__pycache__", "FE"]
+}
