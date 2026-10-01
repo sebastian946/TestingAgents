@@ -11,4 +11,4 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     endpoint: str
 
-settings = Settings()  # type: ignore[call-arg]  # los valores vienen del .env
+settings = Settings()  # type: ignore[call-arg]  # values come from .env

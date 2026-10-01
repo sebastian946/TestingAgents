@@ -1,16 +1,16 @@
-"""Crea las tablas directamente desde los modelos (atajo para desarrollo).
+"""Create the tables directly from the models (development shortcut).
 
-Uso, desde la carpeta app/:  uv run python -m db.init_db
+Usage, from the app/ folder:  uv run python -m db.init_db
 
-Para produccion, la tarea WTA-4 del tablero pide Alembic (migraciones versionadas).
+For production, board task WTA-4 calls for Alembic (versioned migrations).
 """
 from db.conn import Base, engine
-import db.models_db.models_db  # noqa: F401  (registra los modelos en Base.metadata)
+import db.models_db.models_db  # noqa: F401  (registers the models in Base.metadata)
 
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
-    print("Tablas creadas:", ", ".join(Base.metadata.tables))
+    print("Tables created:", ", ".join(Base.metadata.tables))
 
 
 if __name__ == "__main__":
