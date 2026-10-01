@@ -1,138 +1,139 @@
 # Testing Agents
 
-SaaS de testing web asistido por agentes. Recibe la URL de un sitio, lo explora, genera
-escenarios de prueba con un LLM y entrega un reporte. Este repositorio contiene el **Paso 1
-(Motor MVP)**: API, base de datos, cola y worker.
+Agent-assisted web testing SaaS. It takes a site's URL, crawls it, generates test scenarios
+with an LLM and delivers a report. This repository contains **Step 1 (MVP Engine)**: API,
+database, queue and worker.
 
-El plan de trabajo vive en Notion:
+The work plan lives in Notion:
 [Tablero · SaaS Web Testing Agents — Paso 1 (Motor MVP)](https://app.notion.com/p/7b50aed7e8c34d909f606ed3c49f1642).
 
-## Estado actual
+## Current status
 
-| Bloque | Tarea | Estado |
+| Block | Task | Status |
 |---|---|---|
-| A — Esqueleto | Repositorio y estructura de carpetas | Hecho |
-| A — Esqueleto | Postgres y Redis con docker-compose | Hecho |
-| A — Esqueleto | API FastAPI: `POST /jobs` y `GET /jobs/{id}` | Hecho |
-| A — Esqueleto | Modelos SQLAlchemy + CRUD | Hecho (falta Alembic) |
-| A — Esqueleto | Validación anti-SSRF de la URL | Pendiente |
-| B — Queue y Worker | Encolar jobs con RQ, worker, manejo de fallos | Pendiente |
-| C a F | Explorer, Designer, Documenter, Calidad | Pendiente |
+| A — Skeleton | Repository and folder structure | Done |
+| A — Skeleton | Postgres and Redis with docker-compose | Done |
+| A — Skeleton | FastAPI API: `POST /jobs` and `GET /jobs/{id}` | Done |
+| A — Skeleton | SQLAlchemy models + CRUD | Done (Alembic pending) |
+| A — Skeleton | Anti-SSRF URL validation | Done |
+| B — Queue and Worker | Enqueue jobs with RQ, worker, failure handling | Pending |
+| C to F | Explorer, Designer, Documenter, Quality | Pending |
 
-## Arquitectura
+## Architecture
 
 ```
-cliente ──POST /jobs──▶ API (FastAPI) ──▶ PostgreSQL  ◀── worker (RQ)  [pendiente]
-             ◀──202────┘                       ▲              ▲
-cliente ──GET /jobs/{id}──▶ API ───────────────┘              │
-                                                 Redis (cola) ┘  [pendiente]
+client ──POST /jobs──▶ API (FastAPI) ──▶ PostgreSQL  ◀── worker (RQ)  [pending]
+            ◀──202────┘                       ▲              ▲
+client ──GET /jobs/{id}──▶ API ───────────────┘              │
+                                                Redis (queue) ┘  [pending]
 ```
 
-Patrón de job asíncrono: `POST /jobs` solo guarda el job en estado `queued` y responde `202`.
-El trabajo real (crawl, LLM, reporte) lo hará el worker en otro proceso; el cliente consulta
-el avance con `GET /jobs/{id}`. API y worker comparten estado **por la base de datos**, nunca
-por memoria.
+Async job pattern: `POST /jobs` only stores the job in `queued` state and responds `202`.
+The real work (crawl, LLM, report) will be done by the worker in a separate process; the
+client polls progress with `GET /jobs/{id}`. API and worker share state **through the
+database**, never in memory.
 
-### Modelo de datos
+### Data model
 
 ```
 job (uuid) ──1:N──▶ pages (serial) ──1:N──▶ scenarios (serial)
 ```
 
-| Tabla | Campos clave |
+| Table | Key fields |
 |---|---|
 | `job` | `id` UUID, `url`, `status` (`queued` / `running` / `done` / `failed`), `pages_crawled`, `total_scenarios`, `report_path`, `error`, `created_at`, `started_at`, `finished_at` |
 | `pages` | `job_id`, `url`, `title`, `page_type`, `screenshot_path` |
-| `scenarios` | `job_id`, `page_id`, `scenario_code` (`SC-001`…, único por job), `title`, `steps` (JSONB), `expected_result`, `priority`, `category` |
+| `scenarios` | `job_id`, `page_id`, `scenario_code` (`SC-001`…, unique per job), `title`, `steps` (JSONB), `expected_result`, `priority`, `category` |
 
-Borrar un job elimina en cascada sus páginas y escenarios.
+Deleting a job cascades to its pages and scenarios.
 
-## Estructura del repositorio
+## Repository structure
 
 ```
 TestingAgents/
-├── .env                  # variables locales (NO se versiona)
-├── .env.example          # plantilla de variables
-├── pyrightconfig.json    # apunta Pylance al venv de app/
-├── .vscode/settings.json # intérprete de VS Code
-├── FE/                   # frontend (vacío por ahora)
-└── app/                  # backend Python (proyecto uv)
+├── .env                  # local variables (NOT versioned)
+├── .env.example          # variables template
+├── pyrightconfig.json    # points Pylance to the app/ venv
+├── .vscode/settings.json # VS Code interpreter
+├── FE/                   # frontend (empty for now)
+└── app/                  # Python backend (uv project)
     ├── pyproject.toml / uv.lock
     ├── docker-compose.yml   # Postgres 16 + Redis 7
-    ├── main.py              # app FastAPI, CORS, /Health
-    ├── config/variables.py  # Settings (pydantic-settings) leídos del .env
+    ├── main.py              # FastAPI app, CORS, /Health
+    ├── config/variables.py  # Settings (pydantic-settings) read from .env
     ├── db/
-    │   ├── conn.py          # engine, sesión, Base, dependencia get_db
-    │   ├── models_db/models_db.py  # tablas Job, Page, Scenario
-    │   ├── db_crud.py       # operaciones de base de datos
-    │   └── init_db.py       # crea las tablas (atajo de desarrollo)
-    ├── models/models.py     # esquemas Pydantic de entrada/salida
-    ├── routes/routes.py     # endpoints /jobs
-    ├── agents/  worker/  tests/   # pendientes
-    └── .venv/               # creado por uv (NO se versiona)
+    │   ├── conn.py          # engine, session, Base, get_db dependency
+    │   ├── models_db/models_db.py  # Job, Page, Scenario tables
+    │   ├── db_crud.py       # database operations
+    │   └── init_db.py       # creates the tables (development shortcut)
+    ├── models/models.py     # Pydantic input/output schemas
+    ├── routes/routes.py     # /jobs endpoints
+    ├── security/ssrf.py     # anti-SSRF validation of the job URL
+    ├── agents/  worker/  tests/   # pending
+    └── .venv/               # created by uv (NOT versioned)
 ```
 
-## Requisitos
+## Requirements
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- [uv](https://docs.astral.sh/uv/) (gestiona Python y dependencias; instala solo Python 3.12)
-- Opcional: [DBeaver](https://dbeaver.io/) para ver la base de datos
+- [uv](https://docs.astral.sh/uv/) (manages Python and dependencies; installs Python 3.12 by itself)
+- Optional: [DBeaver](https://dbeaver.io/) to browse the database
 
-## Puesta en marcha
+## Getting started
 
-### 1. Variables de entorno
+### 1. Environment variables
 
 ```powershell
 copy .env.example .env
 ```
 
-| Variable | Descripción | Valor por defecto |
+| Variable | Description | Default |
 |---|---|---|
-| `DB_USER` | usuario de PostgreSQL | `myuser` |
-| `DB_PASSWORD` | contraseña de PostgreSQL | `password` |
-| `DB_NAME` | base de datos | `local` |
-| `DB_PORT` | puerto expuesto en tu máquina | `5433` |
-| `ENDPOINT` | host de PostgreSQL visto desde la API | `localhost` |
-| `REDIS_PORT` | puerto expuesto de Redis | `6379` |
+| `DB_USER` | PostgreSQL user | `myuser` |
+| `DB_PASSWORD` | PostgreSQL password | `password` |
+| `DB_NAME` | database | `local` |
+| `DB_PORT` | port exposed on your machine | `5433` |
+| `ENDPOINT` | PostgreSQL host as seen from the API | `localhost` |
+| `REDIS_PORT` | exposed Redis port | `6379` |
 
-`DB_PORT` es `5433` y no `5432` a propósito: si tienes un PostgreSQL instalado en Windows,
-ocupa el 5432 y DBeaver o la API se conectarían a ese en vez de al contenedor
-(síntoma: `password authentication failed for user "myuser"`).
+`DB_PORT` is `5433` rather than `5432` on purpose: if you have PostgreSQL installed on
+Windows, it takes 5432 and DBeaver or the API would connect to it instead of the container
+(symptom: `password authentication failed for user "myuser"`).
 
-El usuario y la contraseña se fijan **la primera vez** que se crea el volumen de Postgres.
-Si los cambias después, hay que recrearlo: `docker compose ... down -v` (borra los datos).
+The user and password are set **the first time** the Postgres volume is created. If you
+change them later, you have to recreate it: `docker compose ... down -v` (deletes the data).
 
-### 2. Base de datos y Redis
+### 2. Database and Redis
 
-Desde la raíz del repositorio:
+From the repository root:
 
 ```powershell
 docker compose --env-file .env -f app/docker-compose.yml up -d
-docker ps        # postgres_db y redis_cache deben estar "Up"
+docker ps        # postgres_db and redis_cache should be "Up"
 ```
 
-El `--env-file .env` es necesario porque el compose está en `app/` y el `.env` en la raíz.
+`--env-file .env` is required because the compose file is in `app/` and `.env` is at the root.
 
-### 3. Dependencias de Python
+### 3. Python dependencies
 
 ```powershell
 cd app
 uv sync
 ```
 
-Crea `app/.venv` con Python 3.12 y todo lo de `uv.lock`. No hace falta activar el entorno:
-`uv run <comando>` lo usa automáticamente.
+Creates `app/.venv` with Python 3.12 and everything in `uv.lock`. No need to activate the
+environment: `uv run <command>` uses it automatically.
 
-### 4. Crear las tablas
+### 4. Create the tables
 
 ```powershell
 uv run python -m db.init_db
 ```
 
-Atajo de desarrollo que crea las tablas desde los modelos. La tarea WTA-4 del tablero pide
-reemplazarlo por migraciones con Alembic (ver "Siguientes pasos").
+Development shortcut that creates the tables from the models. Board task WTA-4 calls for
+replacing it with Alembic migrations (see "Next steps").
 
-### 5. Levantar la API
+### 5. Run the API
 
 ```powershell
 uv run uvicorn main:app --reload
@@ -141,93 +142,105 @@ uv run uvicorn main:app --reload
 - Swagger: http://127.0.0.1:8000/docs
 - Health: http://127.0.0.1:8000/Health
 
-## Uso de la API
+### 6. Run the worker
 
-| Método | Ruta | Respuesta |
-|---|---|---|
-| `POST` | `/jobs` | `202` con el job creado; `422` si la URL no es válida |
-| `GET` | `/jobs` | lista de jobs (más recientes primero), `limit` y `offset` opcionales |
-| `GET` | `/jobs/{id}` | el job; `404` si no existe; `422` si el id no es UUID |
-| `GET` | `/jobs/{id}/pages` | páginas exploradas del job |
-| `GET` | `/jobs/{id}/scenarios` | escenarios generados del job |
-| `DELETE` | `/jobs/{id}` | `204`; borra también páginas y escenarios |
+In another terminal, also from `app/`:
 
 ```powershell
-# crear un job
+uv run rq worker --url redis://localhost:6379
+```
+
+It picks up the jobs enqueued by `POST /jobs` and runs `worker/tasks.py`. Without a worker
+running, jobs stay `queued`.
+
+## API usage
+
+| Method | Path | Response |
+|---|---|---|
+| `POST` | `/jobs` | `202` with the created job; `400` if the URL is not http/https, does not resolve, or points to an internal network (anti-SSRF) |
+| `GET` | `/jobs` | list of jobs (newest first), optional `limit` and `offset` |
+| `GET` | `/jobs/{id}` | the job; `404` if it does not exist; `422` if the id is not a UUID |
+| `GET` | `/jobs/{id}/pages` | pages crawled for the job |
+| `GET` | `/jobs/{id}/scenarios` | scenarios generated for the job |
+| `DELETE` | `/jobs/{id}` | `204`; also deletes pages and scenarios |
+
+```powershell
+# create a job
 $job = Invoke-RestMethod -Method Post http://127.0.0.1:8000/jobs `
   -ContentType "application/json" -Body '{"url": "https://example.com"}'
 
-# consultarlo
+# fetch it
 Invoke-RestMethod "http://127.0.0.1:8000/jobs/$($job.id)"
 ```
 
-## Verificar y depurar
+## Verify and debug
 
 ```powershell
-# estado de los contenedores
+# container status
 docker ps
 docker logs postgres_db --tail 20
 
-# Postgres y Redis responden
+# Postgres and Redis respond
 docker exec -it postgres_db pg_isready -U myuser -d local
 docker exec -it redis_cache redis-cli ping          # PONG
 
-# SQL directo
+# raw SQL
 docker exec -it postgres_db psql -U myuser -d local -c "SELECT id, url, status FROM job;"
 
-# borrar todas las tablas y empezar de cero
+# drop all tables and start from scratch
 docker exec -it postgres_db psql -U myuser -d local -c "DROP TABLE scenarios, pages, job; DROP TYPE job_status;"
 ```
 
-**DBeaver**: nueva conexión PostgreSQL con host `localhost`, puerto `5433`, base `local`,
-usuario `myuser`, contraseña `password`.
+**DBeaver**: new PostgreSQL connection with host `localhost`, port `5433`, database `local`,
+user `myuser`, password `password`.
 
-**Apagar todo**: `docker compose --env-file .env -f app/docker-compose.yml down`
-(añade `-v` para borrar también los datos).
+**Shut everything down**: `docker compose --env-file .env -f app/docker-compose.yml down`
+(add `-v` to also delete the data).
 
-## Desarrollo
+## Development
 
 ### VS Code
 
-El proyecto Python vive en `app/`, no en la raíz, así que VS Code no detecta el `.venv`
-solo. `pyrightconfig.json` y `.vscode/settings.json` ya lo apuntan; si aun así los imports
-salen en rojo: `Ctrl+Shift+P` → *Python: Select Interpreter* → *Enter interpreter path* →
-`app\.venv\Scripts\python.exe`, y luego *Developer: Reload Window*.
+The Python project lives in `app/`, not at the root, so VS Code does not detect the `.venv`
+on its own. `pyrightconfig.json` and `.vscode/settings.json` already point to it; if imports
+still show in red: `Ctrl+Shift+P` → *Python: Select Interpreter* → *Enter interpreter path* →
+`app\.venv\Scripts\python.exe`, then *Developer: Reload Window*.
 
-### Añadir dependencias
+### Adding dependencies
 
 ```powershell
 cd app
-uv add nombre-del-paquete      # actualiza pyproject.toml y uv.lock
+uv add package-name      # updates pyproject.toml and uv.lock
 ```
 
-Commitea `pyproject.toml` y `uv.lock` juntos.
+Commit `pyproject.toml` and `uv.lock` together.
 
-### Convenciones
+### Conventions
 
-- Las funciones de `db_crud.py` reciben la sesión como parámetro (`db: Session`); nunca
-  usan una sesión global. En las rutas se obtiene con `Depends(get_db)`.
-- Entrada y salida de la API siempre con esquemas Pydantic (`models/models.py`); los modelos
-  SQLAlchemy no se exponen directamente.
-- `status` de un job es el enum `JobStatus`, no texto libre.
-- Operaciones de contador (`pages_crawled`, `total_scenarios`) se hacen con `UPDATE`
-  atómico en la misma transacción que el insert, con commit por página.
-- `create_engine(..., echo=True)` imprime el SQL en consola; desactívalo si molesta.
+- Functions in `db_crud.py` receive the session as a parameter (`db: Session`); they never
+  use a global session. Routes get it with `Depends(get_db)`.
+- API input and output always go through Pydantic schemas (`models/models.py`); SQLAlchemy
+  models are never exposed directly.
+- A job's `status` is the `JobStatus` enum, not free text.
+- Counter operations (`pages_crawled`, `total_scenarios`) use an atomic `UPDATE` in the same
+  transaction as the insert, with one commit per page.
+- `create_engine(..., echo=True)` prints SQL to the console; turn it off if it gets noisy.
 
-## Siguientes pasos (según el tablero)
+## Next steps (per the board)
 
-1. **Alembic** (cierra WTA-4):
+1. **Alembic** (closes WTA-4):
    ```powershell
    cd app
    uv add alembic
    uv run alembic init alembic
    ```
-   En `alembic/env.py`: importar `Base` y `DATABASE_URL` de `db.conn`, importar
-   `db.models_db.models_db`, y poner `target_metadata = Base.metadata`. Luego
-   `uv run alembic revision --autogenerate -m "initial tables"` y
-   `uv run alembic upgrade head`. Si ya creaste tablas con `init_db`, bórralas antes.
-2. **Validación anti-SSRF** de la URL (WTA-5): rechazar IPs privadas, `localhost`, etc.
-3. **RQ + worker** (WTA-6 a 8): `uv add rq`; el worker usa `mark_job_running`,
-   `mark_job_done` y `mark_job_failed` de `db_crud.py`.
-4. **Explorer** (WTA-9 a 14): `create_page` ya incrementa `pages_crawled`.
-5. **Designer** (WTA-15 a 18): `create_scenarios` ya genera los códigos `SC-XXX`.
+   In `alembic/env.py`: import `Base` and `DATABASE_URL` from `db.conn`, import
+   `db.models_db.models_db`, and set `target_metadata = Base.metadata`. Then
+   `uv run alembic revision --autogenerate -m "initial tables"` and
+   `uv run alembic upgrade head`. If you already created tables with `init_db`, drop them first.
+2. **RQ + worker** (WTA-6 to 8): `uv add rq`; the worker uses `mark_job_running`,
+   `mark_job_done` and `mark_job_failed` from `db_crud.py`.
+3. **Explorer** (WTA-9 to 14): `create_page` already increments `pages_crawled`. Call
+   `security.ssrf.validate_public_url` before visiting each URL (including discovered
+   links): DNS can change between `POST /jobs` and the crawl (DNS rebinding).
+4. **Designer** (WTA-15 to 18): `create_scenarios` already generates the `SC-XXX` codes.

@@ -1,10 +1,12 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 
 from db import db_crud
 from db.conn import get_db
+from db.redis.redis_conn import add_new_job_to_queue
 from models.models import JobCreate, JobRead, PageRead, ScenarioRead
 from security.ssrf import UnsafeURLError, validate_public_url
 
@@ -27,7 +29,18 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)):
         url = validate_public_url(payload.url)
     except UnsafeURLError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    return db_crud.create_job(db, url=url)
+
+    job = db_crud.create_job(db, url=url)
+    try:
+        add_new_job_to_queue(job.id)
+    except RedisError:
+        # Without this the job would stay `queued` forever with nobody to process it
+        db_crud.mark_job_failed(db, job.id, "Could not enqueue the job.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The job queue is unavailable, try again later.",
+        )
+    return job
 
 
 @router.get(
