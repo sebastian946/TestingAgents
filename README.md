@@ -147,10 +147,11 @@ uv run uvicorn main:app --reload
 In another terminal, also from `app/`:
 
 ```powershell
-uv run rq worker --url redis://localhost:6379
+uv run python -m worker.worker
 ```
 
-It picks up the jobs enqueued by `POST /jobs` and runs `worker/tasks.py`. Without a worker
+It picks up the jobs enqueued by `POST /jobs` one at a time and runs `worker/tasks.py`
+(`queued` → `running` → `done`/`failed`). Without a worker
 running, jobs stay `queued`.
 
 ## API usage

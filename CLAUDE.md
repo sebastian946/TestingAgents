@@ -18,7 +18,7 @@ cd app
 uv sync                            # install deps into app/.venv (Python 3.12)
 uv run python -m db.init_db        # create tables from models (dev shortcut; Alembic is planned, WTA-4)
 uv run uvicorn main:app --reload   # API at http://127.0.0.1:8000/docs, health at /Health
-uv run rq worker --url redis://localhost:6379   # worker (separate terminal); runs worker/tasks.py
+uv run python -m worker.worker     # RQ worker (separate terminal); runs worker/tasks.py
 uv add <pkg>                       # add a dependency; commit pyproject.toml and uv.lock together
 ```
 
