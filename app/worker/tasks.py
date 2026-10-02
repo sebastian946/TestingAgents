@@ -20,7 +20,7 @@ def process_url_task(job_id: str) -> None:
             print(f"Job {job_id} not found, skipping.")
             return
         print(f"Processing URL for job {job_id}: {job.url}")
-        time.sleep(5)  # Simulate processing time (the Explorer will go here)
+        time.sleep(10)  # Simulate processing time (the Explorer will go here)
         db_crud.mark_job_done(db, job_uuid, report_path=f"/reports/{job_id}.json")
         print(f"Processed URL for job {job_id}: {job.url}")
     except Exception as e:
