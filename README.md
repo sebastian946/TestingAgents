@@ -16,7 +16,9 @@ The work plan lives in Notion:
 | A — Skeleton | FastAPI API: `POST /jobs` and `GET /jobs/{id}` | Done |
 | A — Skeleton | SQLAlchemy models + CRUD | Done (Alembic pending) |
 | A — Skeleton | Anti-SSRF URL validation | Done |
-| B — Queue and Worker | Enqueue jobs with RQ, worker, failure handling | Pending |
+| B — Queue and Worker | Enqueue jobs with RQ, worker | Done |
+| B — Queue and Worker | Failure handling (failed state, retry) | Pending |
+| C — Explorer | Worker Dockerfile with Playwright + Chromium | Done |
 | C to F | Explorer, Designer, Documenter, Quality | Pending |
 
 ## Architecture
@@ -58,7 +60,8 @@ TestingAgents/
 ├── FE/                   # frontend (empty for now)
 └── app/                  # Python backend (uv project)
     ├── pyproject.toml / uv.lock
-    ├── docker-compose.yml   # Postgres 16 + Redis 7
+    ├── docker-compose.yml   # Postgres 16 + Redis 7 + api + worker
+    ├── Dockerfile           # targets `api` and `worker` (worker adds Chromium)
     ├── main.py              # FastAPI app, CORS, /Health
     ├── config/variables.py  # Settings (pydantic-settings) read from .env
     ├── db/
@@ -69,7 +72,12 @@ TestingAgents/
     ├── models/models.py     # Pydantic input/output schemas
     ├── routes/routes.py     # /jobs endpoints
     ├── security/ssrf.py     # anti-SSRF validation of the job URL
-    ├── agents/  worker/  tests/   # pending
+    ├── db/redis/redis_conn.py  # Redis client, RQ queue, enqueue helper
+    ├── worker/
+    │   ├── worker.py        # starts the RQ worker
+    │   ├── tasks.py         # what runs for each job (queued → running → done/failed)
+    │   └── check_browser.py # Playwright smoke test
+    ├── agents/  tests/      # pending
     └── .venv/               # created by uv (NOT versioned)
 ```
 
@@ -153,6 +161,23 @@ uv run python -m worker.worker
 It picks up the jobs enqueued by `POST /jobs` one at a time and runs `worker/tasks.py`
 (`queued` → `running` → `done`/`failed`). Without a worker
 running, jobs stay `queued`.
+
+### Alternative: everything in Docker
+
+Instead of steps 3–6, build and run API and worker as containers next to Postgres and Redis.
+From the repository root:
+
+```powershell
+docker compose --env-file .env -f app/docker-compose.yml up -d --build
+docker compose --env-file .env -f app/docker-compose.yml exec api python -m db.init_db          # first time only
+docker compose --env-file .env -f app/docker-compose.yml exec worker python -m worker.check_browser  # Playwright opens example.com
+docker compose --env-file .env -f app/docker-compose.yml logs -f worker                         # watch jobs being processed
+```
+
+`app/Dockerfile` has two targets from the same base: `api` (slim) and `worker` (adds Chromium
+only, via `playwright install --with-deps chromium`). Inside the Docker network the compose
+file overrides `ENDPOINT=postgres`, `REDIS_HOST=redis` and `DB_PORT=5432`; your `.env` keeps
+the `localhost` values for running outside Docker.
 
 ## API usage
 

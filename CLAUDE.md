@@ -20,6 +20,10 @@ uv run python -m db.init_db        # create tables from models (dev shortcut; Al
 uv run uvicorn main:app --reload   # API at http://127.0.0.1:8000/docs, health at /Health
 uv run python -m worker.worker     # RQ worker (separate terminal); runs worker/tasks.py
 uv add <pkg>                       # add a dependency; commit pyproject.toml and uv.lock together
+
+# Fully containerized alternative (from repo root). Dockerfile targets: `api` (slim) and `worker` (adds Chromium only).
+docker compose --env-file .env -f app/docker-compose.yml up -d --build
+docker compose --env-file .env -f app/docker-compose.yml exec worker python -m worker.check_browser   # Playwright smoke test
 ```
 
 There is no test suite, linter, or formatter configured yet (`app/tests/` is planned). Pyright/Pylance is pointed at `app/.venv` via the root `pyrightconfig.json`.
@@ -40,4 +44,9 @@ Layers (all under `app/`):
 
 Conventions in `db_crud.py`: counters are incremented with an atomic SQL expression (`Job.pages_crawled + 1`) in the same transaction as the insert, and the explorer commits once per page so partial crawls stay consistent if the worker dies.
 
-Planned next steps (per README): Alembic migrations, anti-SSRF validation of submitted URLs (WTA-5), RQ queue + worker (WTA-6..8), then Explorer / Designer / Documenter agents (`app/agents/`, `app/worker/`).
+- `db/redis/redis_conn.py` — Redis client + RQ queue. `add_new_job_to_queue` enqueues the task by import string (`"worker.tasks.process_url_task"`) so the API never imports worker code (avoids a circular import). Only the job id travels through Redis.
+- `worker/worker.py` — starts the RQ worker; `worker/tasks.py` — `process_url_task` opens its own DB session and drives `queued → running → done/failed`. The `time.sleep(10)` placeholder is where the Explorer/Designer/Documenter agents will go (`app/agents/`, planned).
+
+Inside Docker, hosts are service names: compose overrides `ENDPOINT=postgres`, `REDIS_HOST=redis`, `DB_PORT=5432`; `.env` keeps `localhost`/`5433` for running outside Docker.
+
+Planned next steps (per README): Alembic migrations (WTA-4), failure handling/retries (WTA-8), then Explorer / Designer / Documenter agents.
