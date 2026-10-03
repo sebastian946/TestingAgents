@@ -22,6 +22,42 @@ services:
     volumes:
       - redis_data:/data
 
+  api:
+    build:
+      context: .
+      target: api
+    container_name: api
+    restart: unless-stopped
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    env_file: ../.env
+    environment:
+      ENDPOINT: postgres
+      REDIS_HOST: redis
+      DB_PORT: 5432
+    depends_on:
+      - postgres
+      - redis
+
+  worker:
+    build:
+      context: .
+      target: worker
+    container_name: worker
+    restart: unless-stopped
+    init: true        # reaps zombie Chromium processes left behind by crashed tasks
+    shm_size: 1gb     # Chromium crashes with Docker's default 64 MB of shared memory
+    env_file: ../.env
+    environment:
+      ENDPOINT: postgres      # dentro de Docker, los hosts son los nombres de los servicios
+      REDIS_HOST: redis
+      DB_PORT: 5432           # puerto interno del contenedor, no el 5433 que expones en tu máquina
+    depends_on:
+      - postgres
+      - redis
+
+
 volumes:
   postgres_data:
   redis_data:

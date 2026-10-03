@@ -1,0 +1,7 @@
+# The host venv must not be copied into the image: `uv sync` creates its own inside the
+# container, and the host one (built for another OS/path) would overwrite it.
+.venv
+__pycache__
+*.pyc
+.python-version
+README.md
