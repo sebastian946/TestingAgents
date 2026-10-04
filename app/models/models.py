@@ -10,12 +10,14 @@ from db.models_db.models_db import JobStatus
 class JobCreate(BaseModel):
     # str rather than HttpUrl: security.ssrf does the validation so we can return 400 (not 422)
     url: str = Field(..., max_length=2048, description="The url for the test execution")
+    description: str | None = Field(None, max_length=500, description="Optional description for the test execution")
 
 
 class JobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    description: str | None = None
     url: str
     status: JobStatus
     pages_crawled: int

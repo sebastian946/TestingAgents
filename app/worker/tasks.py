@@ -3,9 +3,9 @@
 Only the job id travels through Redis; each task opens its own DB session
 (a SQLAlchemy session cannot be serialized, and the API's one is closed after the request).
 """
-import time
 import uuid
 
+from agents.explorer import CrawledPage, crawl
 from db import db_crud
 from db.conn import local_session
 
@@ -20,13 +20,22 @@ def process_url_task(job_id: str) -> None:
             print(f"Job {job_id} not found, skipping.")
             return
         print(f"Processing URL for job {job_id}: {job.url}")
-        time.sleep(10)  # Simulate processing time (the Explorer will go here)
-        db_crud.mark_job_done(db, job_uuid, report_path=f"/reports/{job_id}.json")
-        print(f"Processed URL for job {job_id}: {job.url}")
+
+        def persist_page(page: CrawledPage) -> None:
+            # One commit per page: GET /jobs/{id} shows pages_crawled growing live (WTA-14)
+            db_crud.create_page(db, job_uuid, url=page.url, title=page.title)
+
+        pages = crawl(job.url, on_page=persist_page)
+        if not pages:
+            raise RuntimeError("No page could be fetched from the given URL.")
+
+        # The Designer (WTA-15) and the report (WTA-19) will go here
+        db_crud.mark_job_done(db, job_uuid)
+        print(f"Job {job_id} done: {len(pages)} pages crawled.")
     except Exception as e:
         db.rollback()  # the session may be in a failed transaction
         db_crud.mark_job_failed(db, job_uuid, str(e))
-        print(f"Error occurred while processing URL for job {job_id}: {e}")
+        print(f"Error occurred while processing job {job_id}: {e}")
         raise  # let RQ also register the job as failed
     finally:
         db.close()
