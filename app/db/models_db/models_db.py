@@ -29,6 +29,7 @@ class Job(Base):
         Enum(JobStatus, name="job_status", values_callable=lambda e: [m.value for m in e]),
         default=JobStatus.QUEUED,
     )
+    description: Mapped[str | None] = mapped_column(String(500))
     pages_crawled: Mapped[int] = mapped_column(default=0)
     total_scenarios: Mapped[int] = mapped_column(default=0)
     report_path: Mapped[str | None] = mapped_column(Text)
