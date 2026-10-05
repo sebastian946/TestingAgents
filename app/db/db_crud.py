@@ -101,6 +101,7 @@ def create_page(
     title: str | None = None,
     page_type: str | None = None,
     screenshot_path: str | None = None,
+    elements: dict | None = None,
 ) -> Page:
     """Explorer: insert the page and increment job.pages_crawled in the same transaction.
 
@@ -117,6 +118,7 @@ def create_page(
         title=title,
         page_type=page_type,
         screenshot_path=screenshot_path,
+        elements=elements,
     )
     db.add(page)
     job.pages_crawled = Job.pages_crawled + 1  # atomic UPDATE in SQL, not read+write in Python
@@ -135,12 +137,12 @@ def get_pages_by_job(db: Session, job_id: uuid.UUID) -> list[Page]:
 
 
 def update_page(db: Session, page_id: int, **fields) -> Page | None:
-    """Update individual fields (title, page_type, screenshot_path) after the crawl."""
+    """Update individual fields (title, page_type, screenshot_path, elements) after the crawl."""
     page = db.get(Page, page_id)
     if page is None:
         return None
     for name, value in fields.items():
-        if name in {"title", "page_type", "screenshot_path"}:
+        if name in {"title", "page_type", "screenshot_path", "elements"}:
             setattr(page, name, value)
     db.commit()
     db.refresh(page)

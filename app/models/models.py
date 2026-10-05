@@ -38,6 +38,7 @@ class PageRead(BaseModel):
     title: str | None = None
     page_type: str | None = None
     screenshot_path: str | None = None
+    elements: dict[str, Any] | None = None
     created_at: datetime
 
 
