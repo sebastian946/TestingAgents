@@ -19,7 +19,10 @@ The work plan lives in Notion:
 | B — Queue and Worker | Enqueue jobs with RQ, worker | Done |
 | B — Queue and Worker | Failure handling (failed state, retry) | Pending |
 | C — Explorer | Worker Dockerfile with Playwright + Chromium | Done |
-| C to F | Explorer, Designer, Documenter, Quality | Pending |
+| C — Explorer | Same-domain BFS crawler with page limit and robots.txt (WTA-10) | Done |
+| C — Explorer | Element extraction per page: forms, buttons, navigation (WTA-11) | Done |
+| C — Explorer | Screenshots, page_type (WTA-12, 13) | Pending |
+| D to F | Designer, Documenter, Quality | Pending |
 
 ## Architecture
 
@@ -44,7 +47,7 @@ job (uuid) ──1:N──▶ pages (serial) ──1:N──▶ scenarios (seria
 | Table | Key fields |
 |---|---|
 | `job` | `id` UUID, `url`, `status` (`queued` / `running` / `done` / `failed`), `pages_crawled`, `total_scenarios`, `report_path`, `error`, `created_at`, `started_at`, `finished_at` |
-| `pages` | `job_id`, `url`, `title`, `page_type`, `screenshot_path` |
+| `pages` | `job_id`, `url`, `title`, `page_type`, `screenshot_path`, `elements` (JSONB `PageInfo` inventory: forms with fields, buttons, nav links, headings) |
 | `scenarios` | `job_id`, `page_id`, `scenario_code` (`SC-001`…, unique per job), `title`, `steps` (JSONB), `expected_result`, `priority`, `category` |
 
 Deleting a job cascades to its pages and scenarios.
@@ -175,7 +178,14 @@ docker compose --env-file .env -f app/docker-compose.yml logs -f worker         
 ```
 
 `app/Dockerfile` has two targets from the same base: `api` (slim) and `worker` (adds Chromium
-only, via `playwright install --with-deps chromium`). Inside the Docker network the compose
+only, via `playwright install --with-deps chromium`). To run the worker or the Playwright
+tests **outside** Docker, download the same browser once: `uv run playwright install chromium`
+(from `app/`; the build must match the Playwright version in `uv.lock`, so rerun it after
+`uv sync` upgrades Playwright).
+
+If you created the tables before the `elements` column existed, add it without losing data:
+`docker exec -it postgres_db psql -U myuser -d local -c "ALTER TABLE pages ADD COLUMN elements JSONB;"`
+(Alembic will handle this once WTA-4 is done). Inside the Docker network the compose
 file overrides `ENDPOINT=postgres`, `REDIS_HOST=redis` and `DB_PORT=5432`; your `.env` keeps
 the `localhost` values for running outside Docker.
 
@@ -266,7 +276,7 @@ Commit `pyproject.toml` and `uv.lock` together.
    `uv run alembic upgrade head`. If you already created tables with `init_db`, drop them first.
 2. **RQ + worker** (WTA-6 to 8): `uv add rq`; the worker uses `mark_job_running`,
    `mark_job_done` and `mark_job_failed` from `db_crud.py`.
-3. **Explorer** (WTA-9 to 14): `create_page` already increments `pages_crawled`. Call
-   `security.ssrf.validate_public_url` before visiting each URL (including discovered
-   links): DNS can change between `POST /jobs` and the crawl (DNS rebinding).
+3. **Explorer** (WTA-12, 13): screenshots and `page_type` classification. Add them in
+   `PlaywrightFetcher.fetch` (the page is already open there) and carry them on
+   `CrawledPage` / `FetchResult`; `persist_page` in the worker passes them to `create_page`.
 4. **Designer** (WTA-15 to 18): `create_scenarios` already generates the `SC-XXX` codes.

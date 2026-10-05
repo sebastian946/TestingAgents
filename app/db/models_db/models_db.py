@@ -51,6 +51,7 @@ class Page(Base):
     title: Mapped[str | None] = mapped_column(String(255))
     page_type: Mapped[str | None] = mapped_column(String(100))
     screenshot_path: Mapped[str | None] = mapped_column(Text)
+    elements: Mapped[dict[str, Any] | None] = mapped_column(JSONType)  # PageInfo inventory (WTA-11)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     job: Mapped["Job"] = relationship(back_populates="pages")

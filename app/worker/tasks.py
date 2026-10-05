@@ -23,9 +23,10 @@ def process_url_task(job_id: str) -> None:
 
         def persist_page(page: CrawledPage) -> None:
             # One commit per page: GET /jobs/{id} shows pages_crawled growing live (WTA-14)
-            db_crud.create_page(db, job_uuid, url=page.url, title=page.title)
+            db_crud.create_page(db, job_uuid, url=page.url, title=page.title, elements=page.elements)
 
-        pages = crawl(job.url, on_page=persist_page)
+        # use_browser: render JavaScript and extract the PageInfo inventory (WTA-11)
+        pages = crawl(job.url, on_page=persist_page, use_browser=True)
         if not pages:
             raise RuntimeError("No page could be fetched from the given URL.")
 

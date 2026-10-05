@@ -20,13 +20,16 @@ uv run python -m db.init_db        # create tables from models (dev shortcut; Al
 uv run uvicorn main:app --reload   # API at http://127.0.0.1:8000/docs, health at /Health
 uv run python -m worker.worker     # RQ worker (separate terminal); runs worker/tasks.py
 uv add <pkg>                       # add a dependency; commit pyproject.toml and uv.lock together
+uv run playwright install chromium # once per machine; the Playwright tests and the worker need the browser build matching uv.lock
+uv run pytest                      # tests (app/tests/); they spin up a local HTTP server, no DB or internet needed
+uv run pytest tests/test_explorer.py -k robots   # single file / test
 
 # Fully containerized alternative (from repo root). Dockerfile targets: `api` (slim) and `worker` (adds Chromium only).
 docker compose --env-file .env -f app/docker-compose.yml up -d --build
 docker compose --env-file .env -f app/docker-compose.yml exec worker python -m worker.check_browser   # Playwright smoke test
 ```
 
-There is no test suite, linter, or formatter configured yet (`app/tests/` is planned). Pyright/Pylance is pointed at `app/.venv` via the root `pyrightconfig.json`.
+Tests use pytest (`app/tests/`, run from `app/`). No linter or formatter is configured yet. Pyright/Pylance is pointed at `app/.venv` via the root `pyrightconfig.json`.
 
 `.env` is copied from `.env.example`. `DB_PORT` is 5433 on purpose to avoid colliding with a locally installed Postgres. Postgres credentials are fixed when the volume is first created; changing them requires `docker compose ... down -v`.
 
@@ -45,7 +48,9 @@ Layers (all under `app/`):
 Conventions in `db_crud.py`: counters are incremented with an atomic SQL expression (`Job.pages_crawled + 1`) in the same transaction as the insert, and the explorer commits once per page so partial crawls stay consistent if the worker dies.
 
 - `db/redis/redis_conn.py` — Redis client + RQ queue. `add_new_job_to_queue` enqueues the task by import string (`"worker.tasks.process_url_task"`) so the API never imports worker code (avoids a circular import). Only the job id travels through Redis.
-- `worker/worker.py` — starts the RQ worker; `worker/tasks.py` — `process_url_task` opens its own DB session and drives `queued → running → done/failed`. The `time.sleep(10)` placeholder is where the Explorer/Designer/Documenter agents will go (`app/agents/`, planned).
+- `worker/worker.py` — starts the RQ worker; `worker/tasks.py` — `process_url_task` opens its own DB session, drives `queued → running → done/failed`, and runs the Explorer, persisting each page through an `on_page` callback (`db_crud.create_page`, one commit per page). The Designer/Documenter agents will be added after the crawl.
+- `agents/explorer.py` — `crawl(start_url, max_pages=8, timeout=15, on_page=None, use_browser=False)`: deterministic same-domain BFS (ADR-01: no LLM here). One `_bfs` loop, two fetchers: `RequestsFetcher` (static HTML, default, used by most tests) and `PlaywrightFetcher` (`use_browser=True`, what the worker uses): one headless Chromium per crawl, images/fonts/media blocked, `domcontentloaded` + best-effort 3s `networkidle`, and it fills `CrawledPage.elements`. Guardrails: anti-SSRF check on every URL before fetching, robots.txt via `protego` (the stdlib `urllib.robotparser` ignores wildcards, which most real sites use), `User-Agent: WebTestAgent/0.1`, per-page timeout that skips the page rather than aborting, non-HTML responses skipped, off-site redirects dropped. `normalize_url` drops fragment and query string on purpose (`/items?page=2` counts as `/items`).
+- `agents/page_info.py` — the `PageInfo` inventory stored in `pages.elements` (JSONB) and later fed to the Designer instead of raw HTML: forms (fields with tag/type/name/id/label/placeholder/required/options, submit text), buttons outside forms, main nav links, h1/h2. Extracted by ONE `page.evaluate(EXTRACT_JS)` returning plain JSON (never DOM handles or `outerHTML`); hidden elements, scripts and styles are skipped, every list is capped and `to_dict()` drops empty values so a page stays well under 2KB. Label lookup handles `for`, wrapping labels, `aria-label(ledby)`, the React `<id>-label` convention and a sibling label in the same group; a `<button type="button">` inside a form counts as its submit when no real submit exists.
 
 Inside Docker, hosts are service names: compose overrides `ENDPOINT=postgres`, `REDIS_HOST=redis`, `DB_PORT=5432`; `.env` keeps `localhost`/`5433` for running outside Docker.
 
