@@ -22,6 +22,9 @@ URL normalization decision: the fragment (``#section``) and the query string
 (``?page=2``) are dropped. Two URLs that only differ in those almost always render the
 same template, and with an 8-page budget we would rather spend it on distinct pages.
 
+page_type (WTA-13): in browser mode every page is classified by ``agents.page_classifier``
+(login / signup / checkout / product / listing / form / content) from the same inventory.
+
 Screenshots (WTA-12): with ``screenshot_dir`` set (browser mode only), a full-page PNG is
 taken right after the DOM is read, while the page is still open, so no second browser or
 second fetch is needed. A failed screenshot is logged and the page is kept without one.
@@ -38,6 +41,7 @@ import requests
 from bs4 import BeautifulSoup
 from protego import Protego
 
+from agents.page_classifier import classify_page
 from agents.page_info import EXTRACT_JS, PageInfo
 from security.ssrf import UnsafeURLError, validate_public_url
 
@@ -55,6 +59,7 @@ class CrawledPage:
     status_code: int
     depth: int  # 0 = start URL, 1 = linked from it, ...
     elements: dict[str, Any] | None = None  # PageInfo.to_dict(); only with use_browser=True
+    page_type: str | None = None  # heuristic PageType value (WTA-13); only with use_browser=True
     screenshot_path: str | None = None  # full-page PNG; only with use_browser + screenshot_dir
     links: list[str] = field(default_factory=list, repr=False)  # absolute hrefs found on the page
 
@@ -71,6 +76,7 @@ class FetchResult:
     title: str | None
     links: list[str]
     elements: dict[str, Any] | None = None
+    page_type: str | None = None
     screenshot_path: str | None = None
 
 
@@ -218,9 +224,11 @@ class PlaywrightFetcher:
             links = page.eval_on_selector_all("a[href]", "els => els.map(a => a.href)")
             raw = page.evaluate(EXTRACT_JS)
             info = PageInfo.from_evaluate(page.url, title, raw)
+            page_type = classify_page(info).value
             screenshot_path = self._screenshot(page) if self.screenshot_dir else None
             return FetchResult(
-                page.url, response.status, content_type, title, links, info.to_dict(), screenshot_path
+                page.url, response.status, content_type, title, links,
+                elements=info.to_dict(), page_type=page_type, screenshot_path=screenshot_path,
             )
         except PlaywrightTimeoutError:
             print(f"[explorer] skipped {url}: timeout after {timeout}s")
@@ -325,6 +333,7 @@ def _bfs(
             status_code=result.status_code,
             depth=depth,
             elements=result.elements,
+            page_type=result.page_type,
             screenshot_path=result.screenshot_path,
             links=result.links,
         )

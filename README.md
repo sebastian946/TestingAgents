@@ -21,7 +21,8 @@ The work plan lives in Notion:
 | C — Explorer | Worker Dockerfile with Playwright + Chromium | Done |
 | C — Explorer | Same-domain BFS crawler with page limit and robots.txt (WTA-10) | Done |
 | C — Explorer | Element extraction per page: forms, buttons, navigation (WTA-11) | Done |
-| C — Explorer | Screenshots, page_type (WTA-12, 13) | Pending |
+| C — Explorer | Full-page screenshots per page (WTA-12) | Done |
+| C — Explorer | Heuristic `page_type` classification (WTA-13) | Done |
 | D to F | Designer, Documenter, Quality | Pending |
 
 ## Architecture
@@ -260,6 +261,29 @@ Commit `pyproject.toml` and `uv.lock` together.
 - A job's `status` is the `JobStatus` enum, not free text.
 - Counter operations (`pages_crawled`, `total_scenarios`) use an atomic `UPDATE` in the same
   transaction as the insert, with one commit per page.
+
+### Page type rules (`agents/page_classifier.py`)
+
+`page_type` is decided by deterministic rules over the `PageInfo` inventory plus a few
+counters the extractor computes in the browser (`PageInfo.signals`: `price_count`,
+`stock_words`, `link_count`, `max_similar_links`, `word_count`, `repeated_button_max`).
+No LLM: it is cheaper, faster, reproducible, and good enough for the MVP. First match wins:
+
+| # | `page_type` | Rule |
+|---|---|---|
+| 1 | `login` | a form has a `password` field and looks like sign-in (≤ 3 fields, or "log in / sign in" wording) |
+| 2 | `signup` | password field plus > 3 fields, a confirm-password field, or "sign up / register / create account" wording |
+| 3 | `checkout` | card fields (`card`, `cvv`, `expiry`…) or "checkout / pay / place order" wording |
+| 4 | `product` | 1–5 prices and either a buy/add-to-cart button or product vocabulary ("in stock", "sku", "quantity"), with no button repeated ≥ 4 times |
+| 5 | `listing` | ≥ 6 prices, or the same button text ≥ 4 times (a grid of cards), or ≥ 6 links sharing a path prefix with < 6 words per link, or a path like `/products`, `/catalogue`, `/category`, `/blog`, `/search` |
+| 6 | `form` | a form with ≥ 2 visible fields that is not just a search box |
+| 7 | `content` | everything else (home, articles, about pages, search-only pages) |
+
+Fields found outside any `<form>` (JS-driven logins) are grouped into a *virtual form*
+(`virtual: true`), so rule 1 still applies. Thresholds are constants at the top of the
+module. Measured on 9 real pages (2 logins, 2 forms, 1 product, 2 listings, 2 content
+pages): 9/9 correct; the signals that mattered are in `tests/test_page_classifier.py`.
+To improve a rule, add the failing page as a unit test first, then adjust the threshold.
 - `create_engine(..., echo=True)` prints SQL to the console; turn it off if it gets noisy.
 
 ## Next steps (per the board)
@@ -276,7 +300,6 @@ Commit `pyproject.toml` and `uv.lock` together.
    `uv run alembic upgrade head`. If you already created tables with `init_db`, drop them first.
 2. **RQ + worker** (WTA-6 to 8): `uv add rq`; the worker uses `mark_job_running`,
    `mark_job_done` and `mark_job_failed` from `db_crud.py`.
-3. **Explorer** (WTA-12, 13): screenshots and `page_type` classification. Add them in
-   `PlaywrightFetcher.fetch` (the page is already open there) and carry them on
-   `CrawledPage` / `FetchResult`; `persist_page` in the worker passes them to `create_page`.
+3. **Explorer** (WTA-14): live progress is already covered by the per-page commit in
+   `persist_page`; verify `GET /jobs/{id}` while a job runs and close the ticket.
 4. **Designer** (WTA-15 to 18): `create_scenarios` already generates the `SC-XXX` codes.

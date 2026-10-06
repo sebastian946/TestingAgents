@@ -31,6 +31,7 @@ def process_url_task(job_id: str) -> None:
                 url=page.url,
                 title=page.title,
                 elements=page.elements,
+                page_type=page.page_type,
                 screenshot_path=page.screenshot_path,
             )
 

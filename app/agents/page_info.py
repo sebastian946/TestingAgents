@@ -36,6 +36,7 @@ class FormInfo:
     method: str
     fields: list[FieldInfo]
     submit_text: str | None = None
+    virtual: bool = False  # fields found outside any <form> (JS-driven login/search boxes)
 
 
 @dataclass
@@ -46,6 +47,12 @@ class PageInfo:
     forms: list[FormInfo] = field(default_factory=list)
     buttons: list[str] = field(default_factory=list)
     nav_links: list[dict[str, str]] = field(default_factory=list)  # {"text", "href"}
+    # Cheap counters for page_type classification (WTA-13): price_count, link_count,
+    # max_similar_links (largest group of same-site links sharing their first path segment),
+    # word_count (visible words; listings have few words per link, articles have many),
+    # repeated_button_max (same button text N times: 20x "Add to basket" is a listing),
+    # stock_words (product vocabulary on the page: "in stock", "sku", "quantity"...)
+    signals: dict[str, int] = field(default_factory=dict)
 
     @property
     def has_password_field(self) -> bool:
@@ -62,6 +69,7 @@ class PageInfo:
                 action=f.get("action"),
                 method=f.get("method", "get"),
                 submit_text=f.get("submit_text"),
+                virtual=bool(f.get("virtual", False)),
                 fields=[FieldInfo(**fld) for fld in f.get("fields", [])],
             )
             for f in raw.get("forms", [])
@@ -73,6 +81,7 @@ class PageInfo:
             forms=forms,
             buttons=raw.get("buttons", []),
             nav_links=raw.get("nav_links", []),
+            signals=raw.get("signals", {}),
         )
 
 
@@ -124,9 +133,10 @@ EXTRACT_JS = f"""
 
   // --- forms -----------------------------------------------------------------
   const forms = [];
-  for (const form of Array.from(document.querySelectorAll("form")).slice(0, {MAX_FORMS})) {{
+  const formsWithFields = new Set();
+  const collectFields = (elements) => {{
     const fields = [];
-    for (const el of form.querySelectorAll("input, select, textarea")) {{
+    for (const el of elements) {{
       const type = (el.getAttribute("type") || (el.tagName === "INPUT" ? "text" : el.tagName.toLowerCase())).toLowerCase();
       if (["hidden", "submit", "button", "reset", "image"].includes(type)) continue;
       if (!visible(el)) continue;
@@ -146,7 +156,12 @@ EXTRACT_JS = f"""
       }}
       fields.push(f);
     }}
+    return fields;
+  }};
+  for (const form of Array.from(document.querySelectorAll("form")).slice(0, {MAX_FORMS})) {{
+    const fields = collectFields(form.querySelectorAll("input, select, textarea"));
     if (!fields.length) continue;  // e.g. a search form that is hidden, or only hidden inputs
+    formsWithFields.add(form);
     // explicit submit first; SPAs often wire a plain <button type="button"> instead
     const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type])')
       || form.querySelector("button");
@@ -160,11 +175,26 @@ EXTRACT_JS = f"""
 
   // --- buttons (outside forms, deduplicated by text) ---------------------------
   const buttons = [];
-  for (const b of document.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"]')) {{
-    if (b.closest("form") || !visible(b)) continue;
+  const buttonCounts = {{}};  // same text repeated N times = a listing of cards, not a product
+  for (const b of document.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"], a.btn, a[class*="button"]')) {{
+    const owner = b.closest("form");
+    if ((owner && formsWithFields.has(owner)) || !visible(b)) continue;
     const t = buttonText(b);
-    if (t && !buttons.includes(t)) buttons.push(t);
-    if (buttons.length >= {MAX_BUTTONS}) break;
+    if (!t) continue;
+    buttonCounts[t] = (buttonCounts[t] || 0) + 1;
+    if (!buttons.includes(t) && buttons.length < {MAX_BUTTONS}) buttons.push(t);
+  }}
+  const repeated_button_max = Math.max(0, ...Object.values(buttonCounts));
+
+  // --- virtual form: visible fields outside any <form> (JS-driven login/search) ---
+  if (forms.length < {MAX_FORMS}) {{
+    const orphans = collectFields(
+      Array.from(document.querySelectorAll("input, select, textarea")).filter(el => !el.closest("form")));
+    if (orphans.length) {{
+      const submit = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]'))
+        .find(b => !b.closest("form") && visible(b));
+      forms.push({{ action: null, method: "js", submit_text: submit ? buttonText(submit) : null, fields: orphans, virtual: true }});
+    }}
   }}
 
   // --- main navigation -------------------------------------------------------
@@ -184,6 +214,28 @@ EXTRACT_JS = f"""
   const headings = Array.from(document.querySelectorAll("h1, h2"))
     .filter(visible).map(h => clean(h.innerText)).filter(Boolean).slice(0, {MAX_HEADINGS});
 
-  return {{ forms, buttons, nav_links, headings }};
+  // --- signals for page_type classification ------------------------------------
+  // prices: "$ 19.99", "19,99 €", "USD 20", "20 EUR" ... counted on the visible text
+  const text = (document.body.innerText || "").slice(0, 200000);
+  const priceRe = /(?:[$€£]\\s?\\d[\\d.,]*|\\d[\\d.,]*\\s?(?:€|£|USD|EUR|COP|MXN|GBP))/g;
+  const price_count = (text.match(priceRe) || []).length;
+  // product-detail vocabulary (stock, sku, quantity...) counted on the visible text
+  const stockRe = /\\b(in stock|out of stock|availability|sku|quantity|qty|add to (cart|bag|basket)|en stock|agotado|disponible|cantidad)\\b/gi;
+  const stock_words = (text.match(stockRe) || []).length;
+  const word_count = text.split(/\\s+/).filter(Boolean).length;
+  // similar links: /catalogue/a, /catalogue/b ... grouped by first path segment (depth >= 2)
+  const groups = {{}};
+  let link_count = 0;
+  for (const a of document.querySelectorAll("a[href]")) {{
+    let u; try {{ u = new URL(a.href); }} catch {{ continue; }}
+    if (u.origin !== location.origin) continue;
+    link_count++;
+    const segs = u.pathname.split("/").filter(Boolean);
+    if (segs.length >= 2) groups[segs[0]] = (groups[segs[0]] || 0) + 1;
+  }}
+  const max_similar_links = Math.max(0, ...Object.values(groups));
+  const signals = {{ price_count, stock_words, link_count, max_similar_links, word_count, repeated_button_max }};
+
+  return {{ forms, buttons, nav_links, headings, signals }};
 }}
 """

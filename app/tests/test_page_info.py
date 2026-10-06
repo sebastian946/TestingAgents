@@ -16,6 +16,7 @@ from agents.page_info import PageInfo
 PAGES = {
     "/": """<html><head><title>Acme</title><style>.x{color:red}</style></head><body>
         <nav><a href="/contact">Contact us</a><a href="/login">Sign in</a><a href="/">Home</a></nav>
+        <a href="/jslogin">js login</a> <a href="/shoes">shoes</a>
         <h1>Welcome to Acme</h1>
         <button onclick="x()">Get started</button>
         <button style="display:none">Hidden button</button>
@@ -33,6 +34,13 @@ PAGES = {
           <input type="checkbox" name="newsletter"> <input type="text" name="honeypot" style="display:none">
           <button type="submit">Send message</button>
         </form></body></html>""",
+    "/jslogin": """<html><head><title>JS Login</title></head><body>
+        <div><input id="user" placeholder="Username"><input id="pass" type="password" placeholder="Password">
+        <button id="go">Submit</button></div></body></html>""",
+    "/shoes": """<html><head><title>Shoes</title></head><body>
+        <h1>Running shoe</h1><p>Only $ 79.99 today</p>
+        <form action="/cart" method="post"><input type="hidden" name="sku" value="1"><button>Add to basket</button></form>
+        </body></html>""",
     "/login": """<html><head><title>Login</title></head><body>
         <form action="/session" method="post">
           <input name="username" type="text" placeholder="Username">
@@ -101,7 +109,7 @@ def test_noise_is_ignored_and_nav_buttons_headings_extracted(fetched):
     info = fetched["/"].elements
     assert info["buttons"] == ["Get started"]  # hidden ones dropped
     assert info["headings"] == ["Welcome to Acme"]
-    assert [l["text"] for l in info["nav_links"]] == ["Contact us", "Sign in", "Home"]
+    assert [l["text"] for l in info["nav_links"]][:3] == ["Contact us", "Sign in", "Home"]
     assert "forms" not in info  # empty lists are dropped by to_dict
     assert "script" not in json.dumps(info) and "color:red" not in json.dumps(info)
 
@@ -113,9 +121,22 @@ def test_page_info_is_small(fetched):
 
 
 def test_crawl_with_browser_attaches_elements_and_follows_links(site):
-    pages = crawl(site, max_pages=5, timeout=10, use_browser=True)
+    pages = crawl(site, max_pages=8, timeout=10, use_browser=True)
     by_url = {p.url: p for p in pages}
-    assert set(by_url) == {f"{site}/", f"{site}/contact", f"{site}/login"}
+    assert set(by_url) == {f"{site}/", f"{site}/contact", f"{site}/login", f"{site}/jslogin", f"{site}/shoes"}
     assert by_url[f"{site}/"].title == "Acme"
     assert all(p.elements is not None for p in pages)
     assert PageInfo.from_evaluate("u", "t", {"forms": by_url[f"{site}/login"].elements["forms"]}).has_password_field
+    # page_type (WTA-13) computed in browser mode from the same inventory
+    assert by_url[f"{site}/login"].page_type == "login"
+    assert by_url[f"{site}/contact"].page_type == "form"
+    assert by_url[f"{site}/"].page_type == "content"
+    assert by_url[f"{site}/jslogin"].page_type == "login"   # fields without a <form> -> virtual form
+    assert by_url[f"{site}/shoes"].page_type == "product"  # price + "Add to basket" in a bare form
+
+
+def test_virtual_form_and_bare_form_button(fetched):
+    js = fetched["/jslogin"].elements["forms"][0]
+    assert js["virtual"] is True and js["submit_text"] == "Submit"
+    assert [f["type"] for f in js["fields"]] == ["text", "password"]
+    assert "Add to basket" in fetched["/shoes"].elements["buttons"]
