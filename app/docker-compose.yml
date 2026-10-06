@@ -31,6 +31,8 @@ services:
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
+    volumes:
+      - reports_data:/app/reports   # same files as the worker, so the API can serve them later
     env_file: ../.env
     environment:
       ENDPOINT: postgres
@@ -48,6 +50,8 @@ services:
     restart: unless-stopped
     init: true        # reaps zombie Chromium processes left behind by crashed tasks
     shm_size: 1gb     # Chromium crashes with Docker's default 64 MB of shared memory
+    volumes:
+      - reports_data:/app/reports   # screenshots and reports survive container restarts
     env_file: ../.env
     environment:
       ENDPOINT: postgres      # dentro de Docker, los hosts son los nombres de los servicios
@@ -61,3 +65,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  reports_data:

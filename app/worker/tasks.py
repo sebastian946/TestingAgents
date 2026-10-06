@@ -4,8 +4,10 @@ Only the job id travels through Redis; each task opens its own DB session
 (a SQLAlchemy session cannot be serialized, and the API's one is closed after the request).
 """
 import uuid
+from pathlib import Path
 
 from agents.explorer import CrawledPage, crawl
+from config.variables import settings
 from db import db_crud
 from db.conn import local_session
 
@@ -23,10 +25,19 @@ def process_url_task(job_id: str) -> None:
 
         def persist_page(page: CrawledPage) -> None:
             # One commit per page: GET /jobs/{id} shows pages_crawled growing live (WTA-14)
-            db_crud.create_page(db, job_uuid, url=page.url, title=page.title, elements=page.elements)
+            db_crud.create_page(
+                db,
+                job_uuid,
+                url=page.url,
+                title=page.title,
+                elements=page.elements,
+                screenshot_path=page.screenshot_path,
+            )
 
+        # Per-job folder: reports/<job_id>/screenshots/<page>.png (WTA-12)
+        screenshot_dir = Path(settings.reports_dir) / job_id / "screenshots"
         # use_browser: render JavaScript and extract the PageInfo inventory (WTA-11)
-        pages = crawl(job.url, on_page=persist_page, use_browser=True)
+        pages = crawl(job.url, on_page=persist_page, use_browser=True, screenshot_dir=screenshot_dir)
         if not pages:
             raise RuntimeError("No page could be fetched from the given URL.")
 
