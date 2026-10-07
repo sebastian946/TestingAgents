@@ -15,4 +15,11 @@ class Settings(BaseSettings):
     # is /app/reports, backed by the `reports_data` volume shared by api and worker.
     reports_dir: str = "reports"
 
+    # Designer agent (WTA-15). Optional so the API, the crawl and the tests run without a key;
+    # the Designer raises a clear error if it is called without one.
+    anthropic_api_key: str | None = None
+    designer_model: str = "claude-opus-5-5"
+    designer_effort: str = "high"  # low | medium | high | xhigh | max
+    designer_prompt_version: str = "v2"  # folder under agents/prompts/designer/
+
 settings = Settings()  # type: ignore[call-arg]  # values come from .env
