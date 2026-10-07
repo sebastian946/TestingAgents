@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from db.models_db.models_db import Job, JobStatus, Page, Scenario
@@ -43,10 +43,22 @@ def list_jobs(db: Session, limit: int = 50, offset: int = 0) -> list[Job]:
 
 
 def mark_job_running(db: Session, job_id: uuid.UUID) -> Job | None:
-    """Worker: QUEUED -> RUNNING, sets started_at."""
+    """Worker: QUEUED -> RUNNING, sets started_at.
+
+    Also wipes the results of any previous attempt (RQ retry, or a worker that died and the
+    job was re-enqueued): the crawl restarts from the home page, so keeping the old rows
+    would duplicate pages. Reset and status change share one commit, so nobody ever sees a
+    RUNNING job that still carries the old counters.
+    """
     job = db.get(Job, job_id)
     if job is None:
         return None
+    db.execute(delete(Scenario).where(Scenario.job_id == job_id))  # FK to pages: delete first
+    db.execute(delete(Page).where(Page.job_id == job_id))
+    job.pages_crawled = 0
+    job.total_scenarios = 0
+    job.report_path = None
+    job.finished_at = None
     job.status = JobStatus.RUNNING
     job.started_at = _now()
     job.error = None

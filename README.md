@@ -23,6 +23,7 @@ The work plan lives in Notion:
 | C — Explorer | Element extraction per page: forms, buttons, navigation (WTA-11) | Done |
 | C — Explorer | Full-page screenshots per page (WTA-12) | Done |
 | C — Explorer | Heuristic `page_type` classification (WTA-13) | Done |
+| C — Explorer | Persist pages one by one, live progress in `GET /jobs/{id}` (WTA-14) | Done |
 | D to F | Designer, Documenter, Quality | Pending |
 
 ## Architecture
@@ -300,6 +301,6 @@ To improve a rule, add the failing page as a unit test first, then adjust the th
    `uv run alembic upgrade head`. If you already created tables with `init_db`, drop them first.
 2. **RQ + worker** (WTA-6 to 8): `uv add rq`; the worker uses `mark_job_running`,
    `mark_job_done` and `mark_job_failed` from `db_crud.py`.
-3. **Explorer** (WTA-14): live progress is already covered by the per-page commit in
-   `persist_page`; verify `GET /jobs/{id}` while a job runs and close the ticket.
+3. **Failure handling** (WTA-8): reprocessing a job is already safe (`mark_job_running`
+   wipes the previous attempt's pages and counters), so RQ retries can be enabled.
 4. **Designer** (WTA-15 to 18): `create_scenarios` already generates the `SC-XXX` codes.
