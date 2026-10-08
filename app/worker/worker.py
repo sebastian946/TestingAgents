@@ -6,10 +6,11 @@ The worker runs in its own process: it blocks waiting on Redis, takes one job at
 and executes the task it names (worker.tasks.process_url_task). It shares state with the
 API only through Postgres.
 """
+import os
 import sys
 
 from redis.exceptions import RedisError
-from rq import Worker
+from rq import SimpleWorker, Worker
 
 from db.redis.redis_conn import job_queue, redis_client
 
@@ -27,7 +28,11 @@ def main() -> int:
     # Errors INSIDE a task are handled in worker/tasks.py (the job is marked `failed`) and
     # RQ keeps the worker alive for the next job. Ctrl+C is handled by RQ too: the first one
     # finishes the current job before exiting, the second one kills it (see WTA-8).
-    worker = Worker([job_queue], connection=redis_client)
+    # The default Worker runs every job in a forked child (a crash or leak in one job cannot
+    # take the worker down). os.fork does not exist on Windows, so there the job runs in the
+    # worker process itself; inside Docker (Linux) the forking Worker is used.
+    worker_class = Worker if hasattr(os, "fork") else SimpleWorker
+    worker = worker_class([job_queue], connection=redis_client)
     try:
         worker.work()
     except RedisError as exc:

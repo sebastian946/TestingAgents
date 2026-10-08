@@ -23,6 +23,8 @@ The work plan lives in Notion:
 | C — Explorer | Element extraction per page: forms, buttons, navigation (WTA-11) | Done |
 | C — Explorer | Full-page screenshots per page (WTA-12) | Done |
 | C — Explorer | Heuristic `page_type` classification (WTA-13) | Done |
+| C — Explorer | Persist pages one by one, live progress in `GET /jobs/{id}` (WTA-14) | Done |
+| D — Designer | Designer prompt + structured output with Pydantic (WTA-15) | Done (not yet wired into the worker) |
 | D to F | Designer, Documenter, Quality | Pending |
 
 ## Architecture
@@ -262,6 +264,35 @@ Commit `pyproject.toml` and `uv.lock` together.
 - Counter operations (`pages_crawled`, `total_scenarios`) use an atomic `UPDATE` in the same
   transaction as the insert, with one commit per page.
 
+### Designer agent (`agents/designer.py`)
+
+`design_scenarios(page, description)` sends one page (its `page_type` and `PageInfo`
+inventory) plus the app description from the job to Claude and returns validated
+`TestScenario`s (title, steps, expected_result, priority `critical/high/medium/low`,
+category `functional/negative/validation/security/usability/accessibility`).
+
+- **Prompts are versioned files**, not strings in code: `agents/prompts/designer/vN/`
+  (`system.md` static, `user.md` per page). `DESIGNER_PROMPT_VERSION` selects one; the
+  history and rationale of each version is in `agents/prompts/designer/CHANGELOG.md`.
+- **Structured outputs** (`client.beta.messages.parse(output_format=DesignerOutput)`): the
+  API constrains the response to the Pydantic schema, so it always parses.
+- **No `temperature`**: current Claude models reject sampling parameters (the board's
+  "temperature 0.2" predates that). Consistency comes from the schema, the rubric in the
+  prompt and `DESIGNER_EFFORT`.
+- **Prompt caching** on the static system prompt; it only takes effect once the prefix
+  reaches the model's minimum cacheable size (check `cache_read_input_tokens` in the eval).
+- **Refusal fallback** (`fallbacks="default"`): if a safety classifier declines a request,
+  the API retries it on Anthropic's recommended fallback model within the same call.
+
+Needs `ANTHROPIC_API_KEY` in `.env` (see `.env.example`). Evaluate a prompt version against
+the WTA-15 acceptance criteria — it calls the real API, asks before spending, and saves the
+results to `reports/designer_eval/`:
+
+```powershell
+cd app
+uv run python -m agents.designer_eval --version v2
+```
+
 ### Page type rules (`agents/page_classifier.py`)
 
 `page_type` is decided by deterministic rules over the `PageInfo` inventory plus a few
@@ -300,6 +331,9 @@ To improve a rule, add the failing page as a unit test first, then adjust the th
    `uv run alembic upgrade head`. If you already created tables with `init_db`, drop them first.
 2. **RQ + worker** (WTA-6 to 8): `uv add rq`; the worker uses `mark_job_running`,
    `mark_job_done` and `mark_job_failed` from `db_crud.py`.
-3. **Explorer** (WTA-14): live progress is already covered by the per-page commit in
-   `persist_page`; verify `GET /jobs/{id}` while a job runs and close the ticket.
-4. **Designer** (WTA-15 to 18): `create_scenarios` already generates the `SC-XXX` codes.
+3. **Failure handling** (WTA-8): reprocessing a job is already safe (`mark_job_running`
+   wipes the previous attempt's pages and counters), so RQ retries can be enabled.
+4. **Designer** (WTA-16 to 18): run the eval with a real key and write prompt v3 from
+   what it shows; add parse retries and model choice (WTA-16); call `design_scenarios` per
+   page in the worker and persist with `create_scenarios`, which already generates the
+   `SC-XXX` codes (WTA-17); log `DesignResult` token usage per job (WTA-18).

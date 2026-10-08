@@ -3,6 +3,7 @@
 Only the job id travels through Redis; each task opens its own DB session
 (a SQLAlchemy session cannot be serialized, and the API's one is closed after the request).
 """
+import shutil
 import uuid
 from pathlib import Path
 
@@ -21,24 +22,35 @@ def process_url_task(job_id: str) -> None:
         if job is None:
             print(f"Job {job_id} not found, skipping.")
             return
-        print(f"Processing URL for job {job_id}: {job.url}")
+        start_url = job.url
+        print(f"Processing URL for job {job_id}: {start_url}")
+        # Never hold a connection (and its open transaction) during the crawl: it is minutes
+        # of network and browser I/O, and an "idle in transaction" connection blocks
+        # migrations and vacuum. The session is reusable after close().
+        db.close()
 
         def persist_page(page: CrawledPage) -> None:
-            # One commit per page: GET /jobs/{id} shows pages_crawled growing live (WTA-14)
-            db_crud.create_page(
-                db,
-                job_uuid,
-                url=page.url,
-                title=page.title,
-                elements=page.elements,
-                page_type=page.page_type,
-                screenshot_path=page.screenshot_path,
-            )
+            # One short transaction per page (WTA-14): the row and the pages_crawled increment
+            # are committed together, so GET /jobs/{id} (another process) sees the counter grow
+            # live and it always equals the number of rows. If the worker dies mid-crawl, the
+            # pages already committed stay; a single commit at the end would lose all of them.
+            with local_session() as page_db:
+                db_crud.create_page(
+                    page_db,
+                    job_uuid,
+                    url=page.url,
+                    title=page.title,
+                    elements=page.elements,
+                    page_type=page.page_type,
+                    screenshot_path=page.screenshot_path,
+                )
 
         # Per-job folder: reports/<job_id>/screenshots/<page>.png (WTA-12)
         screenshot_dir = Path(settings.reports_dir) / job_id / "screenshots"
+        # mark_job_running wiped the previous attempt's rows; drop its files too
+        shutil.rmtree(screenshot_dir, ignore_errors=True)
         # use_browser: render JavaScript and extract the PageInfo inventory (WTA-11)
-        pages = crawl(job.url, on_page=persist_page, use_browser=True, screenshot_dir=screenshot_dir)
+        pages = crawl(start_url, on_page=persist_page, use_browser=True, screenshot_dir=screenshot_dir)
         if not pages:
             raise RuntimeError("No page could be fetched from the given URL.")
 
