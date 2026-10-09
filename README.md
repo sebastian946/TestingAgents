@@ -25,6 +25,7 @@ The work plan lives in Notion:
 | C — Explorer | Heuristic `page_type` classification (WTA-13) | Done |
 | C — Explorer | Persist pages one by one, live progress in `GET /jobs/{id}` (WTA-14) | Done |
 | D — Designer | Designer prompt + structured output with Pydantic (WTA-15) | Done (not yet wired into the worker) |
+| D — Designer | Parse retry, LLM error handling and model choice (WTA-16) | Done; model comparison pending a real API key ([ADR-02](docs/adr/ADR-02-designer-model.md)) |
 | D to F | Designer, Documenter, Quality | Pending |
 
 ## Architecture
@@ -274,8 +275,22 @@ category `functional/negative/validation/security/usability/accessibility`).
 - **Prompts are versioned files**, not strings in code: `agents/prompts/designer/vN/`
   (`system.md` static, `user.md` per page). `DESIGNER_PROMPT_VERSION` selects one; the
   history and rationale of each version is in `agents/prompts/designer/CHANGELOG.md`.
-- **Structured outputs** (`client.beta.messages.parse(output_format=DesignerOutput)`): the
-  API constrains the response to the Pydantic schema, so it always parses.
+- **Structured outputs**: the request carries the `DesignerOutput` JSON schema
+  (`output_config.format`), and Pydantic validates the response on our side. That second
+  check covers the rules the API cannot enforce: non-blank text, at least one step, unique
+  titles, at most 12 scenarios, titles that fit the column.
+- **Self-healing retry** (WTA-16): a response that fails validation is sent back once, with
+  the errors as feedback ("field X failed because Y, correct it"). If it fails again, that
+  page has no scenarios.
+- **API errors** (WTA-16): the SDK retries rate limits (429), overload (529), 5xx and
+  timeouts with exponential backoff (`DESIGNER_MAX_RETRIES`, `DESIGNER_TIMEOUT`). After
+  that, the page is skipped (`DesignerError`). Configuration errors (bad key, unknown model)
+  raise `DesignerFatalError` and stop the run, since every page would fail the same way.
+- **One page never stops the job**: `design_pages(pages, description)` returns one
+  `PageDesign` per page, with either its scenarios or the error that left it empty.
+- **Model choice**: `DESIGNER_MODEL` is configuration, and the request only sends what each
+  model accepts (Haiku 4.5 has no `effort`). The decision and its cost analysis are in
+  [ADR-02](docs/adr/ADR-02-designer-model.md).
 - **No `temperature`**: current Claude models reject sampling parameters (the board's
   "temperature 0.2" predates that). Consistency comes from the schema, the rubric in the
   prompt and `DESIGNER_EFFORT`.
@@ -291,6 +306,8 @@ results to `reports/designer_eval/`:
 ```powershell
 cd app
 uv run python -m agents.designer_eval --version v2
+uv run python -m agents.designer_eval --model claude-sonnet-5-5   # same pages, another model
+uv run python -m agents.designer_eval --compare                   # saved runs side by side, no API calls
 ```
 
 ### Page type rules (`agents/page_classifier.py`)
@@ -333,7 +350,8 @@ To improve a rule, add the failing page as a unit test first, then adjust the th
    `mark_job_done` and `mark_job_failed` from `db_crud.py`.
 3. **Failure handling** (WTA-8): reprocessing a job is already safe (`mark_job_running`
    wipes the previous attempt's pages and counters), so RQ retries can be enabled.
-4. **Designer** (WTA-16 to 18): run the eval with a real key and write prompt v3 from
-   what it shows; add parse retries and model choice (WTA-16); call `design_scenarios` per
-   page in the worker and persist with `create_scenarios`, which already generates the
-   `SC-XXX` codes (WTA-17); log `DesignResult` token usage per job (WTA-18).
+4. **Designer** (WTA-17, 18): with a real key, run the model comparison and close ADR-02,
+   then write prompt v3 from what the eval shows. Call `design_pages` in the worker after the
+   crawl and persist each page's scenarios with `create_scenarios`, which already generates
+   the `SC-XXX` codes (WTA-17). Log the token usage and `estimated_cost_usd` of each
+   `DesignResult` per job (WTA-18).

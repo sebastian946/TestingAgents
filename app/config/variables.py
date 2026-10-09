@@ -21,5 +21,9 @@ class Settings(BaseSettings):
     designer_model: str = "claude-opus-5-5"
     designer_effort: str = "high"  # low | medium | high | xhigh | max
     designer_prompt_version: str = "v2"  # folder under agents/prompts/designer/
+    # WTA-16: the SDK retries 429/529/5xx/timeouts with exponential backoff up to this many
+    # times; the timeout is per attempt (high effort on a big page can take minutes)
+    designer_max_retries: int = 4
+    designer_timeout: float = 300.0
 
 settings = Settings()  # type: ignore[call-arg]  # values come from .env
