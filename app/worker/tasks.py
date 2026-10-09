@@ -7,7 +7,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from agents.designer import PageDesign, design_pages
+from agents.designer import CallUsage, PageDesign, PageLike, design_pages
 from agents.explorer import CrawledPage, crawl
 from config.variables import settings
 from db import db_crud
@@ -76,9 +76,28 @@ def process_url_task(job_id: str) -> None:
             print(f"[designer] {outcome.page.url}: {len(r.scenarios)} scenarios "
                   f"(attempts={r.attempts}, ~US${r.estimated_cost_usd:.4f}, {r.model})")
 
+        def log_llm_call(page: PageLike, call: CallUsage) -> None:
+            # Every billed call, failed ones included, in its own short transaction (WTA-18):
+            # the job's cost is visible live in GET /jobs/{id}/usage
+            with local_session() as call_db:
+                db_crud.create_llm_call(
+                    call_db,
+                    job_uuid,
+                    page_id=page_ids.get(page.url),
+                    agent="designer",
+                    model=call.model,
+                    attempt=call.attempt,
+                    outcome=call.outcome,
+                    input_tokens=call.input_tokens,
+                    output_tokens=call.output_tokens,
+                    cache_read_input_tokens=call.cache_read_input_tokens,
+                    cache_creation_input_tokens=call.cache_creation_input_tokens,
+                    cost_usd=call.cost_usd,
+                )
+
         # Designer (WTA-15/16): one LLM call per page, after the crawl so the browser is closed.
         # A page that fails is skipped; DesignerFatalError (bad key, unknown model) fails the job.
-        outcomes = design_pages(pages, description, on_result=persist_scenarios)
+        outcomes = design_pages(pages, description, on_result=persist_scenarios, on_call=log_llm_call)
         failed = [o for o in outcomes if o.result is None]
         if len(failed) == len(outcomes):
             raise RuntimeError(f"No scenarios could be designed for any page. First error: {failed[0].error}")
@@ -91,7 +110,10 @@ def process_url_task(job_id: str) -> None:
         # The report (WTA-19) will go here
         db_crud.mark_job_done(db, job_uuid, error=gaps)
         designed = sum(len(o.result.scenarios) for o in outcomes if o.result)
-        print(f"Job {job_id} done: {len(pages)} pages crawled, {designed} scenarios designed.")
+        usage = db_crud.get_job_usage(db, job_uuid)
+        print(f"Job {job_id} done: {len(pages)} pages crawled, {designed} scenarios designed, "
+              f"{usage['calls']} LLM calls, {usage['input_tokens']} in / {usage['output_tokens']} out tokens, "
+              f"~US${float(usage['cost_usd']):.4f}.")
     except Exception as e:
         db.rollback()  # the session may be in a failed transaction
         db_crud.mark_job_failed(db, job_uuid, str(e))

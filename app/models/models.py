@@ -54,3 +54,28 @@ class ScenarioRead(BaseModel):
     expected_result: str
     priority: str | None = None
     category: str | None = None
+
+
+class ModelUsage(BaseModel):
+    model: str
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int
+    cache_creation_input_tokens: int
+    cost_usd: float
+    calls_without_price: int = Field(description="Calls served by a model with no known price; not in cost_usd")
+
+
+class JobUsage(BaseModel):
+    """LLM tokens and estimated USD a job has spent (WTA-18), from the llm_calls table."""
+
+    job_id: uuid.UUID
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int
+    cache_creation_input_tokens: int
+    cost_usd: float = Field(description="List-price estimate in USD")
+    calls_without_price: int
+    by_model: list[ModelUsage]

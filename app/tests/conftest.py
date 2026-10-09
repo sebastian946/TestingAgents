@@ -3,7 +3,7 @@ import itertools
 
 import pytest
 
-from agents.designer import DesignResult, PageDesign
+from agents.designer import CallUsage, DesignResult, PageDesign
 from models.agent_models import TestScenario
 
 PRIORITIES = ["critical", "high", "medium", "low"]
@@ -16,7 +16,12 @@ class FakeDesigner:
     Each page gets `per_page` scenarios with rotating priorities and categories. Pages whose
     url is in `fail_urls` get the given error instead; `fatal` is raised before any page;
     `after_page` runs after each page is persisted (to observe progress from outside).
+    Like the real one, it reports every API call through `on_call(page, usage)`: one `ok`
+    call per designed page, two `invalid` calls (first try + self-healing retry) per failed
+    page, each with `tokens_per_call` = (input, output).
     """
+
+    MODEL = "claude-opus-5-5"
 
     def __init__(self):
         self.per_page = 2
@@ -24,7 +29,12 @@ class FakeDesigner:
         self.fatal: Exception | None = None
         self.after_page = None
         self.descriptions: list[str | None] = []
+        self.tokens_per_call = (1000, 500)
         self._rotation = itertools.count()
+
+    def _call(self, attempt: int, outcome: str) -> CallUsage:
+        tokens_in, tokens_out = self.tokens_per_call
+        return CallUsage(self.MODEL, self.MODEL, attempt, outcome, tokens_in, tokens_out, 0, 0)
 
     def _scenarios(self, page) -> list[TestScenario]:
         out = []
@@ -39,17 +49,22 @@ class FakeDesigner:
             ))
         return out
 
-    def __call__(self, pages, description=None, *, on_result=None, **_options):
+    def __call__(self, pages, description=None, *, on_result=None, on_call=None, **_options):
         self.descriptions.append(description)
         if self.fatal is not None:
             raise self.fatal
         outcomes = []
         for page in pages:
             if page.url in self.fail_urls:
+                calls = [self._call(1, "invalid"), self._call(2, "invalid")]
                 outcome = PageDesign(page, error=self.fail_urls[page.url])
             else:
-                result = DesignResult(self._scenarios(page), "claude-opus-5-5", 1, 1000, 500, 0, 0)
+                calls = [self._call(1, "ok")]
+                result = DesignResult(self._scenarios(page), self.MODEL, 1, *self.tokens_per_call, 0, 0)
                 outcome = PageDesign(page, result=result)
+            if on_call is not None:
+                for call in calls:
+                    on_call(page, call)
             outcomes.append(outcome)
             if on_result is not None:
                 on_result(outcome)

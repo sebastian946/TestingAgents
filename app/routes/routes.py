@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from db import db_crud
 from db.conn import get_db
 from db.redis.redis_conn import add_new_job_to_queue
-from models.models import JobCreate, JobRead, PageRead, ScenarioRead
+from models.models import JobCreate, JobRead, JobUsage, PageRead, ScenarioRead
 from security.ssrf import UnsafeURLError, validate_public_url
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -87,6 +87,17 @@ def get_job_scenarios(job_id: uuid.UUID, db: Session = Depends(get_db)):
     if db_crud.get_job(db, job_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
     return db_crud.get_scenarios_by_job(db, job_id)
+
+
+@router.get(
+    "/{job_id}/usage",
+    response_model=JobUsage,
+    summary="LLM tokens and estimated cost of a job",
+)
+def get_job_usage(job_id: uuid.UUID, db: Session = Depends(get_db)):
+    if db_crud.get_job(db, job_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+    return db_crud.get_job_usage(db, job_id)
 
 
 @router.delete(
