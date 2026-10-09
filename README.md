@@ -27,6 +27,7 @@ The work plan lives in Notion:
 | D — Designer | Designer prompt + structured output with Pydantic (WTA-15) | Done (not yet wired into the worker) |
 | D — Designer | Parse retry, LLM error handling and model choice (WTA-16) | Done; model comparison pending a real API key ([ADR-02](docs/adr/ADR-02-designer-model.md)) |
 | D — Designer | Designer wired into the worker, scenarios persisted in Postgres (WTA-17) | Done |
+| D — Designer | Token and cost logging per job: `llm_calls` table, `GET /jobs/{id}/usage` (WTA-18) | Done |
 | D to F | Designer, Documenter, Quality | Pending |
 
 ## Architecture
@@ -247,6 +248,57 @@ SELECT jsonb_array_elements_text(steps) AS step
 FROM scenarios WHERE job_id = '<job_id>' AND scenario_code = 'SC-001';
 ```
 
+## LLM tokens and cost (WTA-18)
+
+Every billed call to the Anthropic API is logged in `llm_calls`, one row per call, and a
+job's totals are SUMs over its rows. Failed calls are logged too: invalid output, a refusal,
+a cut-off response. The answers to "how many tokens did this job use, and how many dollars?"
+are `GET /jobs/{id}/usage` or the queries below.
+
+**Why a table and not columns on `job`:** a job makes one call per page plus the
+self-healing retries, and the failed calls are billed too. Columns on `job` would keep only
+the totals. The table keeps the cost per page, per model (a server-side fallback can switch
+models) and per attempt, and future agents (the Documenter) add rows without a schema change.
+`cost_usd` is computed when the call happens, from `MODEL_PROFILES` in `agents/designer.py`
+(list prices, cache writes at 1.25x and reads at 0.1x of the input price), so a later price
+change does not rewrite history. A model with no known price stores `NULL` and is counted in
+`calls_without_price`. When a job is retried, the earlier run's calls stay in its cost with
+`page_id = NULL`.
+
+```sql
+-- tokens and USD per job, most expensive first (compare any jobs)
+SELECT j.id, j.total_scenarios, count(c.id) AS calls,
+       sum(c.input_tokens + c.cache_read_input_tokens + c.cache_creation_input_tokens) AS input_tokens,
+       sum(c.output_tokens) AS output_tokens, sum(c.cost_usd) AS cost_usd,
+       sum(c.cost_usd) / nullif(j.total_scenarios, 0) AS usd_per_scenario
+FROM job j JOIN llm_calls c ON c.job_id = j.id
+GROUP BY j.id ORDER BY cost_usd DESC;
+
+-- what a job's money went to: each call
+SELECT page_id, model, attempt, outcome, input_tokens, cache_creation_input_tokens,
+       cache_read_input_tokens, output_tokens, cost_usd
+FROM llm_calls WHERE job_id = '<job_id>' ORDER BY created_at;
+
+-- money lost to retries and failures
+SELECT outcome, count(*), sum(cost_usd) FROM llm_calls GROUP BY outcome;
+```
+
+**Measured cost (Opus 5.5, effort `high`, 2026-10).** Two real one-page jobs on a login page:
+
+| Job | Scenarios | Input | Cache write | Cache read | Output | Cost |
+|---|---|---|---|---|---|---|
+| With description | 10 | 240 | 2,686 | 0 | 2,163 | $0.0577 |
+| Without description (run right after) | 8 | 210 | 0 | 2,686 | 1,543 | $0.0328 |
+
+Output is about 85% of the cost, and the cache makes the second call to the system prompt
+roughly 12x cheaper. A page costs **about $0.03 to $0.05** once the cache is warm, and the
+first call of a job pays about $0.012 more to write it. Projection, to be confirmed on
+real multi-page sites, where bigger forms mean more scenarios:
+
+- **One 8-page job:** 8 × ~$0.04 + $0.012 ≈ **$0.33**.
+- **1,000 jobs a month:** ≈ **$330 in LLM cost**, which is the floor for pricing. Sonnet 5.5
+  would roughly halve it (see ADR-02).
+
 ## Verify and debug
 
 ```powershell
@@ -328,8 +380,9 @@ category `functional/negative/validation/security/usability/accessibility`).
 - **No `temperature`**: current Claude models reject sampling parameters (the board's
   "temperature 0.2" predates that). Consistency comes from the schema, the rubric in the
   prompt and `DESIGNER_EFFORT`.
-- **Prompt caching** on the static system prompt; it only takes effect once the prefix
-  reaches the model's minimum cacheable size (check `cache_read_input_tokens` in the eval).
+- **Prompt caching** on the static system prompt (about 2.7K tokens). Measured on real
+  jobs: the first call writes it to the cache, and calls within the next 5 minutes read it at
+  0.1x the input price.
 - **Refusal fallback** (`fallbacks="default"`): if a safety classifier declines a request,
   the API retries it on Anthropic's recommended fallback model within the same call.
 
@@ -384,9 +437,8 @@ To improve a rule, add the failing page as a unit test first, then adjust the th
    `mark_job_done` and `mark_job_failed` from `db_crud.py`.
 3. **Failure handling** (WTA-8): reprocessing a job is already safe (`mark_job_running`
    wipes the previous attempt's pages and counters), so RQ retries can be enabled.
-4. **Designer** (WTA-18): log the token usage and `estimated_cost_usd` of each
-   `DesignResult` per job; today the worker only prints them. Run the model comparison and
-   close ADR-02, then write prompt v3. The first real job on a login page produced 11
+4. **Designer**: run the model comparison and close ADR-02 (`llm_calls` now gives the real
+   cost of each candidate), then write prompt v3. The first real job on a login page produced 11
    scenarios, against the prompt's 5 to 8, and 9 of them `critical`, because the description
    raised every priority one level. v3 should keep the counts within the guidance and leave
    some spread in the priorities.
