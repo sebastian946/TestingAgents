@@ -30,7 +30,7 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)):
     except UnsafeURLError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
-    job = db_crud.create_job(db, url=url)
+    job = db_crud.create_job(db, url=url, description=payload.description)
     try:
         add_new_job_to_queue(job.id)
     except RedisError:
