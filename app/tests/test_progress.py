@@ -19,8 +19,11 @@ from worker import tasks
 
 
 @pytest.fixture
-def sessions(tmp_path: Path, monkeypatch):
-    """A file-backed DB shared by a 'worker' session factory and an 'api' observer."""
+def sessions(tmp_path: Path, monkeypatch, fake_designer):
+    """A file-backed DB shared by a 'worker' session factory and an 'api' observer.
+
+    The Designer is faked (conftest.py) so the worker never calls the Anthropic API.
+    """
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False)

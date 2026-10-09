@@ -26,6 +26,7 @@ The work plan lives in Notion:
 | C — Explorer | Persist pages one by one, live progress in `GET /jobs/{id}` (WTA-14) | Done |
 | D — Designer | Designer prompt + structured output with Pydantic (WTA-15) | Done (not yet wired into the worker) |
 | D — Designer | Parse retry, LLM error handling and model choice (WTA-16) | Done; model comparison pending a real API key ([ADR-02](docs/adr/ADR-02-designer-model.md)) |
+| D — Designer | Designer wired into the worker, scenarios persisted in Postgres (WTA-17) | Done |
 | D to F | Designer, Documenter, Quality | Pending |
 
 ## Architecture
@@ -213,6 +214,39 @@ $job = Invoke-RestMethod -Method Post http://127.0.0.1:8000/jobs `
 Invoke-RestMethod "http://127.0.0.1:8000/jobs/$($job.id)"
 ```
 
+## Querying the scenarios (WTA-17)
+
+After the crawl, the worker sends each page to the Designer and stores its scenarios in
+`scenarios`, one short transaction per page, so `total_scenarios` grows live like
+`pages_crawled`. Codes `SC-001`, `SC-002`... continue across the job's pages and are unique
+per job (constraint `uq_scenario_code_per_job`). A page the Designer cannot cover is skipped:
+the job still ends `done`, and `job.error` lists the uncovered pages. If no page gets
+scenarios, or the configuration is wrong (bad API key, unknown model), the job ends `failed`.
+
+`priority` and `category` are plain columns because they are what you filter and group by.
+`steps` is JSONB because it is an ordered list, always read whole with its scenario, and its
+length varies per scenario. The scenarios also come back from `GET /jobs/{id}/scenarios`.
+
+```sql
+-- the counter matches the rows, and the codes are unique
+SELECT j.total_scenarios, count(s.id) AS rows, count(DISTINCT s.scenario_code) AS unique_codes
+FROM job j LEFT JOIN scenarios s ON s.job_id = j.id
+WHERE j.id = '<job_id>' GROUP BY j.total_scenarios;
+
+-- by page
+SELECT p.url, p.page_type, count(s.id) AS scenarios
+FROM pages p JOIN scenarios s ON s.page_id = p.id
+WHERE p.job_id = '<job_id>' GROUP BY p.url, p.page_type;
+
+-- by priority / by category
+SELECT priority, count(*) FROM scenarios WHERE job_id = '<job_id>' GROUP BY priority;
+SELECT category, count(*) FROM scenarios WHERE job_id = '<job_id>' GROUP BY category;
+
+-- the steps of one scenario, one row per step (JSONB)
+SELECT jsonb_array_elements_text(steps) AS step
+FROM scenarios WHERE job_id = '<job_id>' AND scenario_code = 'SC-001';
+```
+
 ## Verify and debug
 
 ```powershell
@@ -350,8 +384,9 @@ To improve a rule, add the failing page as a unit test first, then adjust the th
    `mark_job_done` and `mark_job_failed` from `db_crud.py`.
 3. **Failure handling** (WTA-8): reprocessing a job is already safe (`mark_job_running`
    wipes the previous attempt's pages and counters), so RQ retries can be enabled.
-4. **Designer** (WTA-17, 18): with a real key, run the model comparison and close ADR-02,
-   then write prompt v3 from what the eval shows. Call `design_pages` in the worker after the
-   crawl and persist each page's scenarios with `create_scenarios`, which already generates
-   the `SC-XXX` codes (WTA-17). Log the token usage and `estimated_cost_usd` of each
-   `DesignResult` per job (WTA-18).
+4. **Designer** (WTA-18): log the token usage and `estimated_cost_usd` of each
+   `DesignResult` per job; today the worker only prints them. Run the model comparison and
+   close ADR-02, then write prompt v3. The first real job on a login page produced 11
+   scenarios, against the prompt's 5 to 8, and 9 of them `critical`, because the description
+   raised every priority one level. v3 should keep the counts within the guidance and leave
+   some spread in the priorities.

@@ -13,9 +13,13 @@ def _now() -> datetime:
 
 # ---------------------------------------------------------------- Jobs
 
-def create_job(db: Session, url: str) -> Job:
-    """POST /jobs: create the job in QUEUED state."""
-    job = Job(url=url, status=JobStatus.QUEUED)
+def create_job(db: Session, url: str, description: str | None = None) -> Job:
+    """POST /jobs: create the job in QUEUED state.
+
+    `description` is the user's own description of the app; the Designer uses it to weight
+    priorities (WTA-15). Blank strings are stored as NULL.
+    """
+    job = Job(url=url, description=(description or "").strip() or None, status=JobStatus.QUEUED)
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -67,13 +71,20 @@ def mark_job_running(db: Session, job_id: uuid.UUID) -> Job | None:
     return job
 
 
-def mark_job_done(db: Session, job_id: uuid.UUID, report_path: str | None = None) -> Job | None:
-    """Worker: RUNNING -> DONE, sets finished_at and the report path."""
+def mark_job_done(
+    db: Session, job_id: uuid.UUID, report_path: str | None = None, error: str | None = None
+) -> Job | None:
+    """Worker: RUNNING -> DONE, sets finished_at and the report path.
+
+    `error` is a non-fatal summary for a job that finished with gaps, e.g. pages the Designer
+    could not cover (WTA-17). A DONE job with an error still has usable results.
+    """
     job = db.get(Job, job_id)
     if job is None:
         return None
     job.status = JobStatus.DONE
     job.finished_at = _now()
+    job.error = error
     if report_path is not None:
         job.report_path = report_path
     db.commit()
@@ -172,10 +183,12 @@ def _next_scenario_number(db: Session, job_id: uuid.UUID) -> int:
 
 
 def create_scenarios(db: Session, job_id: uuid.UUID, page_id: int, scenarios: list[dict]) -> list[Scenario]:
-    """Designer: insert a page's validated scenarios and update job.total_scenarios.
+    """Designer: insert a page's validated scenarios and update job.total_scenarios (WTA-17).
 
-    Cada dict: {"title": str, "steps": list, "expected_result": str, "priority": str?, "category": str?}
-    Codes SC-001, SC-002... are unique within the job.
+    Each dict: {"title": str, "steps": list[str], "expected_result": str, "priority": str,
+    "category": str} (`TestScenario.model_dump()`). Codes SC-001, SC-002... continue across
+    pages and are unique within the job (also enforced by a unique constraint). The rows and
+    the counter increment share one commit, so total_scenarios always equals the row count.
     """
     job = db.get(Job, job_id)
     if job is None:

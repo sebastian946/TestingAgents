@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from string import Template
-from typing import Any, Iterable, Protocol
+from typing import Any, Callable, Iterable, Protocol
 
 import anthropic
 from pydantic import ValidationError
@@ -295,21 +295,27 @@ def design_pages(
     description: str | None = None,
     *,
     client: anthropic.Anthropic | None = None,
+    on_result: Callable[[PageDesign], None] | None = None,
     **options: Any,
 ) -> list[PageDesign]:
     """Design every page; a page that fails is recorded and the rest continue (WTA-16).
 
-    Returns one `PageDesign` per page, in order. Only `DesignerFatalError` (bad key, unknown
-    model...) propagates, since retrying it on the remaining pages would only repeat it.
+    Returns one `PageDesign` per page, in order. `on_result` is called right after each page
+    so the caller can persist it immediately (WTA-17), like the explorer's `on_page`. Only
+    `DesignerFatalError` (bad key, unknown model...) propagates, since retrying it on the
+    remaining pages would only repeat it.
     """
     client = client or _default_client()  # one client: connection reuse across pages
     outcomes: list[PageDesign] = []
     for page in pages:
         try:
-            outcomes.append(PageDesign(page, result=design_scenarios(page, description, client=client, **options)))
+            outcome = PageDesign(page, result=design_scenarios(page, description, client=client, **options))
         except DesignerFatalError:
             raise
         except DesignerError as exc:
             print(f"[designer] no scenarios for {page.url}: {exc}")
-            outcomes.append(PageDesign(page, error=str(exc)))
+            outcome = PageDesign(page, error=str(exc))
+        outcomes.append(outcome)
+        if on_result is not None:
+            on_result(outcome)
     return outcomes
