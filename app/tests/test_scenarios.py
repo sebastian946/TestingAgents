@@ -16,6 +16,7 @@ from agents.explorer import CrawledPage
 from db import db_crud
 from db.conn import Base
 from db.models_db.models_db import Job, JobStatus, Page, Scenario
+from agents import graph
 from worker import tasks
 
 URL = "https://shop.example/"
@@ -27,7 +28,8 @@ def sessions(tmp_path: Path, monkeypatch):
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False)
     monkeypatch.setattr(tasks, "local_session", factory)
-    monkeypatch.setattr(tasks.settings, "reports_dir", str(tmp_path / "reports"))
+    monkeypatch.setattr(graph, "local_session", factory)
+    monkeypatch.setattr(graph.settings, "reports_dir", str(tmp_path / "reports"))
     yield factory
     engine.dispose()
 
@@ -40,7 +42,7 @@ def three_pages(monkeypatch):
         for page in pages:
             on_page(page)
         return pages
-    monkeypatch.setattr(tasks, "crawl", crawl)
+    monkeypatch.setattr(graph, "crawl", crawl)
 
 
 def _new_job(factory, description=None) -> uuid.UUID:
@@ -130,8 +132,8 @@ def test_job_fails_when_no_page_gets_scenarios(sessions, three_pages, fake_desig
     job_id = _new_job(sessions)
     fake_designer.fail_urls = {f"{URL}p{i}": "busy" for i in range(3)}
 
-    with pytest.raises(RuntimeError):
-        tasks.process_url_task(str(job_id))
+    # Routed to the graph's `fail` node by a conditional edge (WTA-21): no exception
+    tasks.process_url_task(str(job_id))
 
     job = _job(sessions, job_id)
     assert job.status is JobStatus.FAILED and "No scenarios could be designed" in job.error

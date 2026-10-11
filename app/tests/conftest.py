@@ -1,4 +1,5 @@
-"""Shared fixtures. The worker tests replace the Designer so no test ever reaches the API."""
+"""Shared fixtures. The worker tests replace the Designer (in agents.graph, where the
+pipeline nodes look it up) so no test ever reaches the API."""
 import itertools
 
 import pytest
@@ -75,8 +76,8 @@ class FakeDesigner:
 
 @pytest.fixture
 def fake_designer(monkeypatch) -> FakeDesigner:
-    from worker import tasks
+    from agents import graph
 
     fake = FakeDesigner()
-    monkeypatch.setattr(tasks, "design_pages", fake)
+    monkeypatch.setattr(graph, "design_pages", fake)
     return fake

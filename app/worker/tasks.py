@@ -2,127 +2,39 @@
 
 Only the job id travels through Redis; each task opens its own DB session
 (a SQLAlchemy session cannot be serialized, and the API's one is closed after the request).
+The work itself is the LangGraph pipeline in `agents.graph` (WTA-21).
 """
-import shutil
 import uuid
-from pathlib import Path
 
-from agents.designer import CallUsage, PageDesign, PageLike, design_pages
-from agents.documenter import generate_report, report_file
-from agents.explorer import CrawledPage, crawl
-from config.variables import settings
+from agents import graph
 from db import db_crud
 from db.conn import local_session
 
 
 def process_url_task(job_id: str) -> None:
-    """Process a queued job: QUEUED -> RUNNING -> crawl -> design -> DONE (or FAILED)."""
+    """Process a queued job: QUEUED -> RUNNING -> graph -> DONE (or FAILED)."""
     job_uuid = uuid.UUID(job_id)
-    db = local_session()
-    try:
+    # Short session: never hold a connection open while the graph crawls and calls the LLM
+    with local_session() as db:
         job = db_crud.mark_job_running(db, job_uuid)
         if job is None:
             print(f"Job {job_id} not found, skipping.")
             return
-        start_url = job.url
-        description = job.description
-        print(f"Processing URL for job {job_id}: {start_url}")
-        # Never hold a connection (and its open transaction) during the crawl: it is minutes
-        # of network and browser I/O, and an "idle in transaction" connection blocks
-        # migrations and vacuum. The session is reusable after close().
-        db.close()
+        initial_state = {"job_id": job_id, "url": job.url, "description": job.description}
+    print(f"Processing URL for job {job_id}: {initial_state['url']}")
 
-        page_ids: dict[str, int] = {}  # crawled url -> pages.id, to link the scenarios (WTA-17)
-
-        def persist_page(page: CrawledPage) -> None:
-            # One short transaction per page (WTA-14): the row and the pages_crawled increment
-            # are committed together, so GET /jobs/{id} (another process) sees the counter grow
-            # live and it always equals the number of rows. If the worker dies mid-crawl, the
-            # pages already committed stay; a single commit at the end would lose all of them.
-            with local_session() as page_db:
-                row = db_crud.create_page(
-                    page_db,
-                    job_uuid,
-                    url=page.url,
-                    title=page.title,
-                    elements=page.elements,
-                    page_type=page.page_type,
-                    screenshot_path=page.screenshot_path,
-                )
-                page_ids[page.url] = row.id
-
-        # Per-job folder: reports/<job_id>/screenshots/<page>.png (WTA-12)
-        screenshot_dir = Path(settings.reports_dir) / job_id / "screenshots"
-        # mark_job_running wiped the previous attempt's rows; drop its files too
-        shutil.rmtree(screenshot_dir, ignore_errors=True)
-        report_file(settings.reports_dir, job_id).unlink(missing_ok=True)
-        # use_browser: render JavaScript and extract the PageInfo inventory (WTA-11)
-        pages = crawl(start_url, on_page=persist_page, use_browser=True, screenshot_dir=screenshot_dir)
-        if not pages:
-            raise RuntimeError("No page could be fetched from the given URL.")
-
-        def persist_scenarios(outcome: PageDesign) -> None:
-            # Same pattern as the pages (WTA-17): one short transaction per page, rows and
-            # total_scenarios increment together, so progress is visible live and a crash
-            # keeps every page already designed.
-            if outcome.result is None:
-                return
-            with local_session() as page_db:
-                db_crud.create_scenarios(
-                    page_db,
-                    job_uuid,
-                    page_ids[outcome.page.url],
-                    [scenario.model_dump() for scenario in outcome.result.scenarios],
-                )
-            r = outcome.result
-            print(f"[designer] {outcome.page.url}: {len(r.scenarios)} scenarios "
-                  f"(attempts={r.attempts}, ~US${r.estimated_cost_usd:.4f}, {r.model})")
-
-        def log_llm_call(page: PageLike, call: CallUsage) -> None:
-            # Every billed call, failed ones included, in its own short transaction (WTA-18):
-            # the job's cost is visible live in GET /jobs/{id}/usage
-            with local_session() as call_db:
-                db_crud.create_llm_call(
-                    call_db,
-                    job_uuid,
-                    page_id=page_ids.get(page.url),
-                    agent="designer",
-                    model=call.model,
-                    attempt=call.attempt,
-                    outcome=call.outcome,
-                    input_tokens=call.input_tokens,
-                    output_tokens=call.output_tokens,
-                    cache_read_input_tokens=call.cache_read_input_tokens,
-                    cache_creation_input_tokens=call.cache_creation_input_tokens,
-                    cost_usd=call.cost_usd,
-                )
-
-        # Designer (WTA-15/16): one LLM call per page, after the crawl so the browser is closed.
-        # A page that fails is skipped; DesignerFatalError (bad key, unknown model) fails the job.
-        outcomes = design_pages(pages, description, on_result=persist_scenarios, on_call=log_llm_call)
-        failed = [o for o in outcomes if o.result is None]
-        if len(failed) == len(outcomes):
-            raise RuntimeError(f"No scenarios could be designed for any page. First error: {failed[0].error}")
-        gaps = None
-        if failed:
-            gaps = f"No scenarios for {len(failed)} of {len(outcomes)} pages: " + "; ".join(
-                f"{o.page.url} ({o.error})" for o in failed
-            )
-
-        # Documenter (WTA-19): the Excel report, built from what is in the database. Only then
-        # is the job DONE, so a done job always has its report.
-        with local_session() as report_db:
-            report_path = generate_report(report_db, job_uuid, settings.reports_dir)
-        db_crud.mark_job_done(db, job_uuid, report_path=str(report_path), error=gaps)
-        designed = sum(len(o.result.scenarios) for o in outcomes if o.result)
-        usage = db_crud.get_job_usage(db, job_uuid)
-        print(f"Job {job_id} done: {len(pages)} pages crawled, {designed} scenarios designed, "
-              f"{usage['calls']} LLM calls, {usage['input_tokens']} in / {usage['output_tokens']} out tokens, "
-              f"~US${float(usage['cost_usd']):.4f}.")
+    try:
+        final_state = graph.testing_graph.invoke(initial_state)
     except Exception as e:
-        db.rollback()  # the session may be in a failed transaction
-        db_crud.mark_job_failed(db, job_uuid, str(e))
+        # Real errors (browser crash, invalid API key, database down). "Nothing to work
+        # with" is not an exception: the graph routes it to its `fail` node.
+        with local_session() as db:
+            db_crud.mark_job_failed(db, job_uuid, str(e))
         print(f"Error occurred while processing job {job_id}: {e}")
         raise  # let RQ also register the job as failed
-    finally:
-        db.close()
+
+    with local_session() as db:
+        usage = db_crud.get_job_usage(db, job_uuid)
+    print(f"Job {job_id} {final_state['status']}: {len(final_state.get('pages', []))} pages, "
+          f"{final_state.get('scenarios_designed', 0)} scenarios, {usage['calls']} LLM calls, "
+          f"~US${float(usage['cost_usd']):.4f}." + (f" ({final_state['error']})" if final_state.get("error") else ""))

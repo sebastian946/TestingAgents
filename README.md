@@ -30,21 +30,72 @@ The work plan lives in Notion:
 | D — Designer | Token and cost logging per job: `llm_calls` table, `GET /jobs/{id}/usage` (WTA-18) | Done |
 | E — Documenter | Excel report per job with openpyxl, `reports/{job_id}.xlsx` (WTA-19) | Done |
 | E — Documenter | `GET /jobs/{id}/report` to download the Excel (WTA-20) | Done |
+| E — Graph | Worker runs the job as a LangGraph `StateGraph` (WTA-21) | Done |
 | D to F | Designer, Documenter, Quality | Pending |
 
 ## Architecture
 
 ```
-client ──POST /jobs──▶ API (FastAPI) ──▶ PostgreSQL  ◀── worker (RQ)  [pending]
-            ◀──202────┘                       ▲              ▲
-client ──GET /jobs/{id}──▶ API ───────────────┘              │
-                                                Redis (queue) ┘  [pending]
+client ──POST /jobs──▶ API (FastAPI) ──▶ PostgreSQL ◀── worker (RQ) runs the LangGraph pipeline
+            ◀──202────┘    │  ▲                          ▲
+client ──GET /jobs/{id}────┘  │                          │
+client ──GET /jobs/{id}/report┘   Redis (queue) ─────────┘
 ```
 
-Async job pattern: `POST /jobs` only stores the job in `queued` state and responds `202`.
-The real work (crawl, LLM, report) will be done by the worker in a separate process; the
-client polls progress with `GET /jobs/{id}`. API and worker share state **through the
-database**, never in memory.
+Async job pattern: `POST /jobs` only stores the job in `queued` state, enqueues its id in
+Redis and responds `202`. The worker, a separate process, takes the id and runs the job
+through a LangGraph graph: crawl, LLM, report. The client polls progress with
+`GET /jobs/{id}` and downloads the Excel when the job is `done`. API and worker share state
+**through the database**, never in memory.
+
+### The job pipeline (LangGraph, WTA-21)
+
+```mermaid
+graph TD;
+    start([start]) --> explorer;
+    explorer -. pages found .-> designer;
+    explorer -. no pages .-> fail;
+    designer -. scenarios designed .-> documenter;
+    designer -. no scenarios .-> fail;
+    documenter --> done([end: done]);
+    fail --> failed([end: failed]);
+```
+
+`agents/graph.py` builds a `StateGraph` over `TestingState` (`agents/state.py`), and the
+worker calls `graph.invoke(initial_state)`. Dotted arrows are conditional edges: "nothing to
+work with" is a normal path of the graph that ends in `failed`, not an exception.
+Exceptions are kept for real errors (the browser crashed, the API key is invalid, the
+database is down), and the worker catches those. Each node reads only the keys it needs and
+returns only the keys it owns:
+
+| Node | Reads | Writes | Side effects |
+|---|---|---|---|
+| `explorer` | `job_id`, `url` | `pages` | crawls the site, saves each page as it is found |
+| `designer` | `job_id`, `description`, `pages` | `scenarios_designed`, `pages_without_scenarios` | one Claude call per page, saves the scenarios and every LLM call |
+| `documenter` | `job_id`, `pages`, `pages_without_scenarios` | `report_path`, `status`, `error` | writes the Excel, marks the job `done` |
+| `fail` | `pages`, `scenarios_designed`, `pages_without_scenarios` | `status`, `error` | marks the job `failed` with the reason |
+
+**What is in the state at each transition** (a real one-page job on a login page):
+
+1. **Input**, from the worker: `{job_id, url: "https://www.saucedemo.com/", description}`.
+2. **After `explorer`**: plus `pages: [{page_id: 28, url, title: "Swag Labs", page_type:
+   "login", elements: {forms: [...]}}]`. `route_after_explorer` sees one page and goes to
+   `designer`. With `pages: []` it would go to `fail`.
+3. **After `designer`**: plus `scenarios_designed: 10, pages_without_scenarios: []`. The
+   scenarios themselves are already in Postgres; the state only carries the count.
+   `route_after_designer` sees 10 and goes to `documenter`.
+4. **After `documenter`**: plus `report_path: "reports/<job_id>.xlsx", status: "done",
+   error: null`. That is the final state `invoke` returns to the worker.
+
+On the failure path, `https://httpbin.org/status/404` gives `pages: []` after the
+explorer, then `fail` adds `status: "failed", error: "No page could be fetched from the
+given URL."`. The designer is never called, so the LLM is never paid for.
+
+The state holds only plain data (ids, strings, dicts), never ORM objects, sessions or the
+browser. It stays small and loggable, and a LangGraph checkpointer could persist it later
+without changes. To watch the transitions yourself, use
+`graph.testing_graph.stream(initial_state, stream_mode="updates")`: it yields one
+`{node: what_it_wrote}` per step.
 
 ### Data model
 

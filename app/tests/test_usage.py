@@ -22,6 +22,7 @@ from db.conn import Base, get_db
 from db.models_db.models_db import Job, LlmCall, Page
 from main import app
 from models.agent_models import DesignerOutput, TestScenario
+from agents import graph
 from worker import tasks
 
 URL = "https://shop.example/"
@@ -86,7 +87,8 @@ def sessions(tmp_path: Path, monkeypatch, fake_designer):
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False)
     monkeypatch.setattr(tasks, "local_session", factory)
-    monkeypatch.setattr(tasks.settings, "reports_dir", str(tmp_path / "reports"))
+    monkeypatch.setattr(graph, "local_session", factory)
+    monkeypatch.setattr(graph.settings, "reports_dir", str(tmp_path / "reports"))
 
     def crawl(url, on_page=None, **_kwargs):
         pages = [CrawledPage(url=f"{url}p{i}", title=f"P{i}", status_code=200, depth=min(i, 1)) for i in range(3)]
@@ -94,7 +96,7 @@ def sessions(tmp_path: Path, monkeypatch, fake_designer):
             on_page(page)
         return pages
 
-    monkeypatch.setattr(tasks, "crawl", crawl)
+    monkeypatch.setattr(graph, "crawl", crawl)
     yield factory
     engine.dispose()
 
