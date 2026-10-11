@@ -95,6 +95,17 @@ def mark_job_done(
     return job
 
 
+def set_report_path(db: Session, job_id: uuid.UUID, report_path: str) -> Job | None:
+    """Record where a job's report file is, without touching its status or timestamps."""
+    job = db.get(Job, job_id)
+    if job is None:
+        return None
+    job.report_path = report_path
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 def mark_job_failed(db: Session, job_id: uuid.UUID, error: str) -> Job | None:
     """Worker: any state -> FAILED with a readable message (no stack trace)."""
     job = db.get(Job, job_id)

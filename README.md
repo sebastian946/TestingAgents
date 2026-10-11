@@ -28,6 +28,8 @@ The work plan lives in Notion:
 | D — Designer | Parse retry, LLM error handling and model choice (WTA-16) | Done; model comparison pending a real API key ([ADR-02](docs/adr/ADR-02-designer-model.md)) |
 | D — Designer | Designer wired into the worker, scenarios persisted in Postgres (WTA-17) | Done |
 | D — Designer | Token and cost logging per job: `llm_calls` table, `GET /jobs/{id}/usage` (WTA-18) | Done |
+| E — Documenter | Excel report per job with openpyxl, `reports/{job_id}.xlsx` (WTA-19) | Done |
+| E — Documenter | `GET /jobs/{id}/report` to download the Excel (WTA-20) | Done |
 | D to F | Designer, Documenter, Quality | Pending |
 
 ## Architecture
@@ -204,6 +206,8 @@ the `localhost` values for running outside Docker.
 | `GET` | `/jobs/{id}` | the job; `404` if it does not exist; `422` if the id is not a UUID |
 | `GET` | `/jobs/{id}/pages` | pages crawled for the job |
 | `GET` | `/jobs/{id}/scenarios` | scenarios generated for the job |
+| `GET` | `/jobs/{id}/usage` | LLM tokens and estimated USD the job has spent |
+| `GET` | `/jobs/{id}/report` | `200` the Excel report as a download (`test-report-{domain}-{date}.xlsx`); `409` while the job runs or if it failed; `404` if the job does not exist |
 | `DELETE` | `/jobs/{id}` | `204`; also deletes pages and scenarios |
 
 ```powershell
@@ -211,8 +215,11 @@ the `localhost` values for running outside Docker.
 $job = Invoke-RestMethod -Method Post http://127.0.0.1:8000/jobs `
   -ContentType "application/json" -Body '{"url": "https://example.com"}'
 
-# fetch it
+# fetch it (poll until status is "done")
 Invoke-RestMethod "http://127.0.0.1:8000/jobs/$($job.id)"
+
+# download the Excel report (in a browser, just open the URL)
+Invoke-WebRequest "http://127.0.0.1:8000/jobs/$($job.id)/report" -OutFile report.xlsx
 ```
 
 ## Querying the scenarios (WTA-17)
@@ -247,6 +254,54 @@ SELECT category, count(*) FROM scenarios WHERE job_id = '<job_id>' GROUP BY cate
 SELECT jsonb_array_elements_text(steps) AS step
 FROM scenarios WHERE job_id = '<job_id>' AND scenario_code = 'SC-001';
 ```
+
+## Excel report (WTA-19)
+
+After the Designer, the worker writes `reports/{job_id}.xlsx` with `agents/documenter.py`,
+stores the path in `job.report_path`, and only then marks the job `done`, so a finished job
+always has its report. The report is built from what is in the database, and every total
+is computed from the same rows as the Scenarios sheet, so the two cannot disagree.
+
+- **Summary**: site, app description, generation date, pages explored, scenarios, and pages
+  left without scenarios. It has totals by priority and by category, each with one line on
+  what it means; a table of the pages with their type and number of scenarios; and a short
+  "How to use this report" for readers who know nothing about the project.
+- **Scenarios**: one row per scenario: ID, page, page type, title, steps (numbered, one per
+  line), expected result, priority (color-coded), category. Empty **Result** (a drop-down
+  with Not run, Pass, Fail, Blocked) and **Notes** columns are left for whoever runs the
+  tests. The header row and the ID column stay frozen, filters are on, and row heights are
+  set to fit the text.
+- Page titles and LLM output are untrusted. Characters that would make Excel refuse the
+  file are stripped, and a value starting with `=` is stored as text, never as a formula.
+  The file is written to a temporary name and then renamed, so a download never sees a
+  half-written report.
+
+Generate the report of an existing job by hand (no API calls), from `app/`:
+
+```powershell
+uv run python -c "import uuid; from db.conn import local_session; from agents.documenter import generate_report; db = local_session(); print(generate_report(db, uuid.UUID('<job_id>'), 'reports'))"
+```
+
+Verified with a real job: Excel 16 opens the file with no repair prompt.
+
+### Downloading it (WTA-20)
+
+`GET /jobs/{id}/report` returns the file with
+`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` and
+`Content-Disposition: attachment; filename="test-report-{domain}-{yyyy-mm-dd}.xlsx"`. The
+domain drops `www.` and the date is when the job finished. A browser saves it directly.
+
+| Situation | Response | Why |
+|---|---|---|
+| Job `done` | `200` with the file | |
+| Job `queued` or `running` | `409 Conflict` + `Retry-After: 15`, detail `{"status": "running", "message": "...N pages explored, M scenarios so far..."}` | The job exists, but its current state does not allow the request. A `404` would tell a polling client the id is wrong and make it give up. |
+| Job `failed` | `409 Conflict`, detail `{"status": "failed", "message": "...Reason: <job.error>"}` | Same resource and state logic. There is no `Retry-After`, because this job will never have a report. |
+| No such job | `404 Not Found` | The only case where the resource does not exist. |
+
+Clients can branch on `detail.status`. The file path is derived from the job id, never
+read from the database, so a stored value cannot point the endpoint at another file. A
+`done` job whose file is missing gets its report rebuilt from the database on the spot,
+without calling the LLM. That covers jobs finished before reports existed, and deleted files.
 
 ## LLM tokens and cost (WTA-18)
 
