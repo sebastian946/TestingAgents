@@ -15,6 +15,7 @@ from agents.explorer import CrawledPage
 from db import db_crud
 from db.conn import Base
 from db.models_db.models_db import Job, JobStatus, Page
+from agents import graph
 from worker import tasks
 
 
@@ -28,7 +29,8 @@ def sessions(tmp_path: Path, monkeypatch, fake_designer):
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False)
     monkeypatch.setattr(tasks, "local_session", factory)
-    monkeypatch.setattr(tasks.settings, "reports_dir", str(tmp_path / "reports"))
+    monkeypatch.setattr(graph, "local_session", factory)
+    monkeypatch.setattr(graph.settings, "reports_dir", str(tmp_path / "reports"))
     yield factory
     engine.dispose()
 
@@ -64,7 +66,7 @@ def _fake_crawl(n_pages: int, observer, fail_after: int | None = None):
 def test_pages_crawled_grows_live_and_matches_rows(sessions, monkeypatch):
     job_id = _new_job(sessions)
     snapshots = []
-    monkeypatch.setattr(tasks, "crawl", _fake_crawl(5, lambda: snapshots.append(_observe(sessions, job_id))))
+    monkeypatch.setattr(graph, "crawl", _fake_crawl(5, lambda: snapshots.append(_observe(sessions, job_id))))
 
     tasks.process_url_task(str(job_id))
 
@@ -78,7 +80,7 @@ def test_pages_crawled_grows_live_and_matches_rows(sessions, monkeypatch):
 
 def test_worker_dying_mid_crawl_keeps_committed_pages_consistent(sessions, monkeypatch):
     job_id = _new_job(sessions)
-    monkeypatch.setattr(tasks, "crawl", _fake_crawl(5, lambda: None, fail_after=3))
+    monkeypatch.setattr(graph, "crawl", _fake_crawl(5, lambda: None, fail_after=3))
 
     with pytest.raises(RuntimeError):
         tasks.process_url_task(str(job_id))
@@ -89,13 +91,13 @@ def test_worker_dying_mid_crawl_keeps_committed_pages_consistent(sessions, monke
 
 def test_reprocessing_a_job_starts_clean_without_duplicates(sessions, monkeypatch):
     job_id = _new_job(sessions)
-    monkeypatch.setattr(tasks, "crawl", _fake_crawl(5, lambda: None, fail_after=3))
+    monkeypatch.setattr(graph, "crawl", _fake_crawl(5, lambda: None, fail_after=3))
     with pytest.raises(RuntimeError):
         tasks.process_url_task(str(job_id))
     assert _observe(sessions, job_id)[:2] == (3, 3)
 
     # Retry (RQ retry or re-enqueue): previous rows are wiped, not appended to
-    monkeypatch.setattr(tasks, "crawl", _fake_crawl(4, lambda: None))
+    monkeypatch.setattr(graph, "crawl", _fake_crawl(4, lambda: None))
     tasks.process_url_task(str(job_id))
     assert _observe(sessions, job_id) == (4, 4, JobStatus.DONE)
 
