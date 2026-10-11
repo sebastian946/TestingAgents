@@ -17,12 +17,14 @@ as a formula (openpyxl would otherwise write it as one: formula injection).
 """
 import math
 import os
+import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE, Cell, MergedCell
@@ -34,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from db import db_crud
 
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PRIORITY_ORDER = ["critical", "high", "medium", "low"]
 PRIORITY_MEANING = {
     "critical": "A core flow is blocked or there is a security or data risk. Run these first.",
@@ -319,6 +322,20 @@ def build_workbook(
 
 def report_file(reports_dir: str | Path, job_id: uuid.UUID | str) -> Path:
     return Path(reports_dir) / f"{job_id}.xlsx"
+
+
+def download_filename(url: str, when: datetime | None) -> str:
+    """Friendly name for the download (WTA-20): test-report-{domain}-{yyyy-mm-dd}.xlsx.
+
+    The domain drops `www.` and keeps only [a-z0-9.-], so the name is safe in any OS and
+    in a Content-Disposition header. Naive datetimes (SQLite) are taken as UTC.
+    """
+    host = (urlsplit(url).hostname or "").lower().removeprefix("www.")
+    domain = re.sub(r"[^a-z0-9.-]+", "-", host).strip("-.") or "site"
+    when = when or datetime.now(timezone.utc)
+    if when.tzinfo is not None:
+        when = when.astimezone(timezone.utc)
+    return f"test-report-{domain}-{when:%Y-%m-%d}.xlsx"
 
 
 def generate_report(db: Session, job_id: uuid.UUID, reports_dir: str | Path) -> Path:
