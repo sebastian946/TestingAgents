@@ -1,11 +1,17 @@
 """Shared fixtures. The worker tests replace the Designer (in agents.graph, where the
 pipeline nodes look it up) so no test ever reaches the API."""
-import itertools
+import os
 
-import pytest
+# Before any app import: tests must never send traces to LangSmith, even when .env has
+# LANGSMITH_TRACING=true (config.variables only fills variables that are not set yet)
+os.environ["LANGSMITH_TRACING"] = "false"
 
-from agents.designer import CallUsage, DesignResult, PageDesign
-from models.agent_models import TestScenario
+import itertools  # noqa: E402
+
+import pytest  # noqa: E402
+
+from agents.designer import CallUsage, DesignResult, PageDesign  # noqa: E402
+from models.agent_models import TestScenario  # noqa: E402
 
 PRIORITIES = ["critical", "high", "medium", "low"]
 CATEGORIES = ["functional", "negative", "validation", "security"]

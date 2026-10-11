@@ -34,7 +34,7 @@ from typing import Any, Callable, Iterable, Protocol
 import anthropic
 from pydantic import ValidationError
 
-from config.variables import settings
+from config.variables import TRACING_ENABLED, settings
 from models.agent_models import DesignerOutput, TestScenario
 
 PROMPTS_DIR = Path(__file__).parent / "prompts" / "designer"
@@ -241,8 +241,17 @@ def _default_client() -> anthropic.Anthropic:
     # With no key in .env the SDK still resolves ANTHROPIC_API_KEY from the environment
     # or an `ant auth login` profile
     if settings.anthropic_api_key:
-        return anthropic.Anthropic(api_key=settings.anthropic_api_key, **options)
-    return anthropic.Anthropic(**options)
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key, **options)
+    else:
+        client = anthropic.Anthropic(**options)
+    if TRACING_ENABLED:
+        # LangGraph traces the graph and its nodes by itself, but these calls go through the
+        # Anthropic SDK, not LangChain: wrapping the client adds each Claude call (prompt,
+        # response, tokens) as a child run of the `designer` node in LangSmith
+        from langsmith.wrappers import wrap_anthropic
+
+        client = wrap_anthropic(client)
+    return client
 
 
 def _request(client: anthropic.Anthropic, model: str, effort: str, system: str, user: str):

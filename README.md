@@ -354,6 +354,43 @@ read from the database, so a stored value cannot point the endpoint at another f
 `done` job whose file is missing gets its report rebuilt from the database on the spot,
 without calling the LLM. That covers jobs finished before reports existed, and deleted files.
 
+## Tracing with LangSmith
+
+With `LANGSMITH_TRACING=true` and a `LANGSMITH_API_KEY` in `.env`, every job shows up in
+LangSmith (project `LANGSMITH_PROJECT`) as one trace:
+
+```
+job <job_id>                [chain]  tags: job, model:claude-opus-5-5, prompt:v2
+  explorer                  [chain]
+    route_after_explorer
+  designer                  [chain]
+    ChatAnthropic           [llm]    prompt, response, tokens (one per Claude call)
+    route_after_designer
+  documenter                [chain]
+```
+
+- **The graph and its nodes** are traced by LangGraph itself.
+- **The Claude calls** go through the Anthropic SDK, not LangChain, so the Designer's
+  client is wrapped with `langsmith.wrappers.wrap_anthropic`. Without that, the trace shows
+  the `designer` node but not what was asked or answered. This needs `langsmith>=0.14.7`:
+  0.14.4 crashes with `anthropic` 1.x, which removed the old Text Completions API.
+- **Each trace is named `job <job_id>`** and carries `job_id`, `url`, model, effort and
+  prompt version as metadata. In LangSmith you can find a job by its id, or compare runs by
+  model or prompt version (useful for ADR-02 and prompt v3).
+- **Settings**: `config/variables.py` exports every `LANGSMITH_*` value from `.env` to the
+  environment, because the SDK only reads environment variables and pydantic-settings does
+  not export them. Docker's `env_file` already does this; values already in the environment win.
+- **Traces are flushed** at the end of every task, so the last batch is not lost when the
+  Linux worker's forked child exits.
+- **Tests never trace**: `tests/conftest.py` sets `LANGSMITH_TRACING=false` before
+  anything is imported.
+
+Traces contain the page inventories, the app description, the prompts and the generated
+scenarios, and they are stored in LangSmith's cloud. For production, consider
+`LANGSMITH_TRACING_SAMPLING_RATE` (trace a fraction of jobs) or `LANGSMITH_HIDE_INPUTS` /
+`LANGSMITH_HIDE_OUTPUTS` (keep the structure and timings, drop the content). The tokens and
+cost per job remain in `llm_calls` either way.
+
 ## LLM tokens and cost (WTA-18)
 
 Every billed call to the Anthropic API is logged in `llm_calls`, one row per call, and a
