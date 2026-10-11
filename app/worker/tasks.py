@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from agents.designer import CallUsage, PageDesign, PageLike, design_pages
+from agents.documenter import generate_report, report_file
 from agents.explorer import CrawledPage, crawl
 from config.variables import settings
 from db import db_crud
@@ -54,6 +55,7 @@ def process_url_task(job_id: str) -> None:
         screenshot_dir = Path(settings.reports_dir) / job_id / "screenshots"
         # mark_job_running wiped the previous attempt's rows; drop its files too
         shutil.rmtree(screenshot_dir, ignore_errors=True)
+        report_file(settings.reports_dir, job_id).unlink(missing_ok=True)
         # use_browser: render JavaScript and extract the PageInfo inventory (WTA-11)
         pages = crawl(start_url, on_page=persist_page, use_browser=True, screenshot_dir=screenshot_dir)
         if not pages:
@@ -107,8 +109,11 @@ def process_url_task(job_id: str) -> None:
                 f"{o.page.url} ({o.error})" for o in failed
             )
 
-        # The report (WTA-19) will go here
-        db_crud.mark_job_done(db, job_uuid, error=gaps)
+        # Documenter (WTA-19): the Excel report, built from what is in the database. Only then
+        # is the job DONE, so a done job always has its report.
+        with local_session() as report_db:
+            report_path = generate_report(report_db, job_uuid, settings.reports_dir)
+        db_crud.mark_job_done(db, job_uuid, report_path=str(report_path), error=gaps)
         designed = sum(len(o.result.scenarios) for o in outcomes if o.result)
         usage = db_crud.get_job_usage(db, job_uuid)
         print(f"Job {job_id} done: {len(pages)} pages crawled, {designed} scenarios designed, "
