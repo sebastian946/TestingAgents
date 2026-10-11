@@ -40,8 +40,13 @@ output is about 1.5K tokens of scenarios, plus reasoning tokens on the models th
 | Haiku 4.5 | 8 × 1.8K × $1/M ≈ $0.01 | 8 × 1.5K × $5/M ≈ $0.06 | **≈ $0.08** |
 
 These are estimates. Output dominates the cost, and the reasoning tokens are the most
-uncertain part. The eval measures the real numbers (`estimated_cost_usd` per page). A
-self-healing retry roughly doubles the cost of that page.
+uncertain part. A self-healing retry roughly doubles the cost of that page.
+
+**Measured (WTA-18, 2026-10-09):** two real jobs on a login page with Opus 5.5 at effort
+`high` cost $0.058 and $0.033 per page, with about 1.5K to 2.2K output tokens. The system
+prompt (about 2.7K tokens) is cached: the second call read it at 0.1x. A warm-cache page
+costs about $0.04, so an 8-page job is about $0.33, half of the estimate above. Every
+job's real cost is in `llm_calls` (README, "LLM tokens and cost").
 
 ## Decision (provisional)
 

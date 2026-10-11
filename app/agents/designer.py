@@ -61,13 +61,41 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
     "claude-opus-5-5": ModelProfile(True, True, 4.0, 20.0),
     "claude-sonnet-5-5": ModelProfile(True, True, 2.0, 10.0),
     "claude-haiku-4-5": ModelProfile(False, False, 1.0, 5.0),
+    # Models a `fallbacks="default"` request can be served by: needed to price those calls
+    "claude-opus-5": ModelProfile(True, True, 5.0, 25.0),
+    "claude-opus-4-8": ModelProfile(True, False, 5.0, 25.0),
+    "claude-fable-5-1": ModelProfile(True, True, 10.0, 50.0),
 }
 # Unknown model ids get the conservative profile: no optional fields, no cost estimate
 UNKNOWN_MODEL = ModelProfile(False, False, 0.0, 0.0)
+CACHE_WRITE_MULTIPLIER = 1.25  # 5-minute cache writes cost 1.25x the input price
+CACHE_READ_MULTIPLIER = 0.1  # cache reads cost 0.1x
 
 
 def model_profile(model: str) -> ModelProfile:
     return MODEL_PROFILES.get(model, UNKNOWN_MODEL)
+
+
+def estimate_cost_usd(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_input_tokens: int = 0,
+    cache_creation_input_tokens: int = 0,
+) -> float | None:
+    """List-price cost of one call, or None when the model has no price in MODEL_PROFILES.
+
+    `input_tokens` excludes the cached ones: the API reports cache reads and writes apart.
+    """
+    p = MODEL_PROFILES.get(model)
+    if p is None:
+        return None
+    tokens_in = (
+        input_tokens
+        + CACHE_WRITE_MULTIPLIER * cache_creation_input_tokens
+        + CACHE_READ_MULTIPLIER * cache_read_input_tokens
+    )
+    return (tokens_in * p.input_usd_per_mtok + output_tokens * p.output_usd_per_mtok) / 1_000_000
 
 
 class DesignerError(RuntimeError):
@@ -97,10 +125,37 @@ class DesignResult:
 
     @property
     def estimated_cost_usd(self) -> float:
-        """List-price estimate; cache writes cost 1.25x input, cache reads 0.1x."""
-        p = model_profile(self.model)
-        tokens_in = self.input_tokens + 1.25 * self.cache_creation_input_tokens + 0.1 * self.cache_read_input_tokens
-        return (tokens_in * p.input_usd_per_mtok + self.output_tokens * p.output_usd_per_mtok) / 1_000_000
+        """List-price estimate of all attempts (0.0 if the model has no known price)."""
+        cost = estimate_cost_usd(
+            self.model, self.input_tokens, self.output_tokens,
+            self.cache_read_input_tokens, self.cache_creation_input_tokens,
+        )
+        return cost or 0.0
+
+
+@dataclass(frozen=True)
+class CallUsage:
+    """Token usage of ONE API call, reported through `on_call` (WTA-18).
+
+    Every billed call is reported, including the ones that did not produce scenarios
+    (`outcome` invalid / refusal / max_tokens): they cost money too.
+    """
+
+    requested_model: str
+    model: str  # model that served it (differs when a server-side fallback ran)
+    attempt: int
+    outcome: str  # ok | invalid | refusal | max_tokens
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int
+    cache_creation_input_tokens: int
+
+    @property
+    def cost_usd(self) -> float | None:
+        return estimate_cost_usd(
+            self.model, self.input_tokens, self.output_tokens,
+            self.cache_read_input_tokens, self.cache_creation_input_tokens,
+        )
 
 
 @dataclass
@@ -240,11 +295,13 @@ def design_scenarios(
     version: str | None = None,
     model: str | None = None,
     effort: str | None = None,
+    on_call: Callable[[CallUsage], None] | None = None,
 ) -> DesignResult:
     """Generate test scenarios for one crawled page.
 
     `page` is anything with url/title/page_type/elements: a `CrawledPage`, a `Page` row or
     a `PageRead`. `description` is the app description the user gave when creating the job.
+    `on_call` receives the usage of every API call, successful or not (WTA-18).
     Raises `DesignerError` if this page cannot get scenarios, `DesignerFatalError` if no page can.
     """
     system, user = render_prompt(page, description, version or settings.designer_prompt_version)
@@ -259,19 +316,44 @@ def design_scenarios(
         response = _request(client, model, effort, system, message)
         usage.add(response.usage)
 
+        parsed: DesignerOutput | None = None
+        validation_error: ValidationError | None = None
+        text = ""
         if response.stop_reason == "refusal":
-            raise DesignerError("The model declined to design scenarios for this page.")
-        if response.stop_reason == "max_tokens":
-            raise DesignerError(f"The Designer response was cut off at {MAX_TOKENS} tokens.")
+            outcome = "refusal"
+        elif response.stop_reason == "max_tokens":
+            outcome = "max_tokens"
+        else:
+            text = _response_text(response)
+            try:
+                parsed = DesignerOutput.model_validate_json(text)
+                outcome = "ok"
+            except ValidationError as exc:
+                validation_error = exc
+                outcome = "invalid"
+        if on_call is not None:  # report before raising: a failed call is billed too
+            on_call(CallUsage(
+                requested_model=model,
+                model=response.model,
+                attempt=attempt,
+                outcome=outcome,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+                cache_read_input_tokens=response.usage.cache_read_input_tokens or 0,
+                cache_creation_input_tokens=response.usage.cache_creation_input_tokens or 0,
+            ))
 
-        text = _response_text(response)
-        try:
-            parsed = DesignerOutput.model_validate_json(text)
-        except ValidationError as exc:
-            last_error = exc
-            print(f"[designer] attempt {attempt} for {page.url} failed validation ({exc.error_count()} errors)")
-            message = feedback_message(user, text, exc)
+        if outcome == "refusal":
+            raise DesignerError("The model declined to design scenarios for this page.")
+        if outcome == "max_tokens":
+            raise DesignerError(f"The Designer response was cut off at {MAX_TOKENS} tokens.")
+        if validation_error is not None:
+            last_error = validation_error
+            print(f"[designer] attempt {attempt} for {page.url} failed validation "
+                  f"({validation_error.error_count()} errors)")
+            message = feedback_message(user, text, validation_error)
             continue
+        assert parsed is not None
         return DesignResult(
             scenarios=parsed.scenarios,
             model=response.model,
@@ -296,12 +378,14 @@ def design_pages(
     *,
     client: anthropic.Anthropic | None = None,
     on_result: Callable[[PageDesign], None] | None = None,
+    on_call: Callable[[PageLike, CallUsage], None] | None = None,
     **options: Any,
 ) -> list[PageDesign]:
     """Design every page; a page that fails is recorded and the rest continue (WTA-16).
 
     Returns one `PageDesign` per page, in order. `on_result` is called right after each page
-    so the caller can persist it immediately (WTA-17), like the explorer's `on_page`. Only
+    so the caller can persist it immediately (WTA-17), like the explorer's `on_page`;
+    `on_call(page, usage)` runs after every API call so its cost can be logged (WTA-18). Only
     `DesignerFatalError` (bad key, unknown model...) propagates, since retrying it on the
     remaining pages would only repeat it.
     """
@@ -309,7 +393,10 @@ def design_pages(
     outcomes: list[PageDesign] = []
     for page in pages:
         try:
-            outcome = PageDesign(page, result=design_scenarios(page, description, client=client, **options))
+            page_on_call = (lambda call, page=page: on_call(page, call)) if on_call is not None else None
+            outcome = PageDesign(
+                page, result=design_scenarios(page, description, client=client, on_call=page_on_call, **options)
+            )
         except DesignerFatalError:
             raise
         except DesignerError as exc:

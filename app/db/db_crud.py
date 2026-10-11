@@ -1,10 +1,10 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from db.models_db.models_db import Job, JobStatus, Page, Scenario
+from db.models_db.models_db import Job, JobStatus, LlmCall, Page, Scenario
 
 
 def _now() -> datetime:
@@ -58,6 +58,9 @@ def mark_job_running(db: Session, job_id: uuid.UUID) -> Job | None:
     if job is None:
         return None
     db.execute(delete(Scenario).where(Scenario.job_id == job_id))  # FK to pages: delete first
+    # The previous attempt's LLM calls were paid for: keep them in the job's cost, unlinked
+    # from the pages about to be deleted (WTA-18)
+    db.execute(update(LlmCall).where(LlmCall.job_id == job_id).values(page_id=None))
     db.execute(delete(Page).where(Page.job_id == job_id))
     job.pages_crawled = 0
     job.total_scenarios = 0
@@ -228,3 +231,68 @@ def get_scenarios_by_job(db: Session, job_id: uuid.UUID) -> list[Scenario]:
 def get_scenarios_by_page(db: Session, page_id: int) -> list[Scenario]:
     stmt = select(Scenario).where(Scenario.page_id == page_id).order_by(Scenario.id)
     return list(db.scalars(stmt))
+
+
+# ------------------------------------------------------------------ LLM usage (WTA-18)
+
+def create_llm_call(
+    db: Session,
+    job_id: uuid.UUID,
+    *,
+    page_id: int | None,
+    agent: str,
+    model: str,
+    attempt: int,
+    outcome: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_input_tokens: int = 0,
+    cache_creation_input_tokens: int = 0,
+    cost_usd: float | None = None,
+) -> LlmCall:
+    """Log one billed LLM call. Committed on its own so the job's cost is visible live."""
+    call = LlmCall(
+        job_id=job_id,
+        page_id=page_id,
+        agent=agent,
+        model=model,
+        attempt=attempt,
+        outcome=outcome,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cost_usd=cost_usd,
+    )
+    db.add(call)
+    db.commit()
+    db.refresh(call)
+    return call
+
+
+def _usage_columns():
+    return (
+        func.count(LlmCall.id).label("calls"),
+        func.coalesce(func.sum(LlmCall.input_tokens), 0).label("input_tokens"),
+        func.coalesce(func.sum(LlmCall.output_tokens), 0).label("output_tokens"),
+        func.coalesce(func.sum(LlmCall.cache_read_input_tokens), 0).label("cache_read_input_tokens"),
+        func.coalesce(func.sum(LlmCall.cache_creation_input_tokens), 0).label("cache_creation_input_tokens"),
+        func.coalesce(func.sum(LlmCall.cost_usd), 0).label("cost_usd"),
+        func.coalesce(func.sum(case((LlmCall.cost_usd.is_(None), 1), else_=0)), 0).label("calls_without_price"),
+    )
+
+
+def get_job_usage(db: Session, job_id: uuid.UUID) -> dict:
+    """Tokens and USD a job has spent so far, in total and per model."""
+    total = db.execute(select(*_usage_columns()).where(LlmCall.job_id == job_id)).one()
+    by_model = db.execute(
+        select(LlmCall.model, *_usage_columns())
+        .where(LlmCall.job_id == job_id)
+        .group_by(LlmCall.model)
+        .order_by(LlmCall.model)
+    ).all()
+    return {
+        "job_id": job_id,
+        **total._asdict(),
+        "by_model": [row._asdict() for row in by_model],
+    }
