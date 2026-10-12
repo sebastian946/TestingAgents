@@ -141,6 +141,7 @@ def main() -> int:
     parser.add_argument("--version", default=settings.designer_prompt_version)
     parser.add_argument("--model", default=settings.designer_model)
     parser.add_argument("--effort", default=settings.designer_effort, help="ignored by models without effort (Haiku 4.5)")
+    parser.add_argument("--language", default="en", choices=["en", "es"], help="language of the scenarios")
     parser.add_argument("--yes", action="store_true", help="skip the cost confirmation")
     parser.add_argument("--compare", action="store_true", help="compare saved runs instead of calling the API")
     args = parser.parse_args()
@@ -163,7 +164,9 @@ def main() -> int:
     results: dict[str, DesignResult] = {}
     for name, page, description in runs:
         print(f"\n=== {name} ({page.url}){' + description' if description else ''} ===", flush=True)
-        result = design_scenarios(page, description, version=args.version, model=args.model, effort=args.effort)
+        result = design_scenarios(
+            page, description, version=args.version, model=args.model, effort=args.effort, language=args.language,
+        )
         results[name] = result
         for s in result.scenarios:
             print(f"  [{s.priority:8}] [{s.category:13}] {s.title}")
@@ -185,11 +188,12 @@ def main() -> int:
 
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out = out_dir / f"{args.version}-{args.model}-{stamp}.json"
+    out = out_dir / f"{args.version}-{args.model}-{args.language}-{stamp}.json"
     out.write_text(json.dumps({
         "version": args.version,
         "model": args.model,
         "effort": effort,
+        "language": args.language,
         "checks": checks,
         "results": {
             name: {**asdict(r), "estimated_cost_usd": r.estimated_cost_usd,

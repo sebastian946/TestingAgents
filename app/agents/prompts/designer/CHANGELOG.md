@@ -27,7 +27,7 @@ Known issues it was replaced for:
 - Offered two output styles (Cucumber or step by step), which a fixed schema cannot honor.
 - No guard against instructions embedded in third-party page content.
 
-## v2 — current default
+## v2
 
 - Static system prompt (cacheable) with all instructions; the page and the description go in
   the user message inside XML tags (`<application_description>`, `<page>`, `<page_inventory>`).
@@ -45,7 +45,20 @@ Known issues it was replaced for:
   biasing every page toward login.
 - Output format is enforced by the API (structured outputs) rather than described in prose.
 
-## v3 — next iteration
+## v3 — current default: output language chosen by the user
+
+- The output language is explicit: the user picks English or Spanish when creating the job
+  (`language`), and it reaches the model in `<output_language>` inside the user message.
+  The system prompt stays static, so it is still cached across languages.
+- v2 inferred the language from the app description. That mixed things up: a Spanish
+  description could not ask for English scenarios, and a site with no description always
+  got English.
+- Priority and category stay English codes in every language; the report translates them
+  for people.
+- New rule: labels, button texts and messages are quoted exactly as the page shows them,
+  even in another language, so a tester can find them on screen.
+
+## v4 — next iteration
 
 To be written from the results of running the eval on v2 with real pages: look at the
 scenarios it produced, note what a senior QA would change (missing cases, vague steps,

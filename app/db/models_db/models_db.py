@@ -33,6 +33,8 @@ class Job(Base):
         default=JobStatus.QUEUED,
     )
     description: Mapped[str | None] = mapped_column(String(500))
+    # Language of the scenarios and the report: "en" | "es" (config/languages.py)
+    language: Mapped[str] = mapped_column(String(5), default="en", server_default="en")
     pages_crawled: Mapped[int] = mapped_column(default=0)
     total_scenarios: Mapped[int] = mapped_column(default=0)
     report_path: Mapped[str | None] = mapped_column(Text)

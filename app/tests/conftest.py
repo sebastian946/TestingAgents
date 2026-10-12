@@ -36,6 +36,7 @@ class FakeDesigner:
         self.fatal: Exception | None = None
         self.after_page = None
         self.descriptions: list[str | None] = []
+        self.languages: list[str | None] = []
         self.tokens_per_call = (1000, 500)
         self._rotation = itertools.count()
 
@@ -58,6 +59,7 @@ class FakeDesigner:
 
     def __call__(self, pages, description=None, *, on_result=None, on_call=None, **_options):
         self.descriptions.append(description)
+        self.languages.append(_options.get("language"))
         if self.fatal is not None:
             raise self.fatal
         outcomes = []
