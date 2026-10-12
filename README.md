@@ -252,7 +252,7 @@ the `localhost` values for running outside Docker.
 
 | Method | Path | Response |
 |---|---|---|
-| `POST` | `/jobs` | `202` with the created job; `400` if the URL is not http/https, does not resolve, or points to an internal network (anti-SSRF) |
+| `POST` | `/jobs` | body `{"url", "description"?, "language"?: "en" \| "es"}`; `202` with the created job; `400` if the URL is not http/https, does not resolve, or points to an internal network (anti-SSRF); `422` for an unsupported language |
 | `GET` | `/jobs` | list of jobs (newest first), optional `limit` and `offset` |
 | `GET` | `/jobs/{id}` | the job; `404` if it does not exist; `422` if the id is not a UUID |
 | `GET` | `/jobs/{id}/pages` | pages crawled for the job |
@@ -264,7 +264,7 @@ the `localhost` values for running outside Docker.
 ```powershell
 # create a job
 $job = Invoke-RestMethod -Method Post http://127.0.0.1:8000/jobs `
-  -ContentType "application/json" -Body '{"url": "https://example.com"}'
+  -ContentType "application/json" -Body '{"url": "https://example.com", "language": "es"}'
 
 # fetch it (poll until status is "done")
 Invoke-RestMethod "http://127.0.0.1:8000/jobs/$($job.id)"
@@ -353,6 +353,73 @@ Clients can branch on `detail.status`. The file path is derived from the job id,
 read from the database, so a stored value cannot point the endpoint at another file. A
 `done` job whose file is missing gets its report rebuilt from the database on the spot,
 without calling the LLM. That covers jobs finished before reports existed, and deleted files.
+
+## Languages: English and Spanish
+
+Each job is delivered in the language chosen when it is created: `"language": "en"` (the
+default) or `"es"` in `POST /jobs`. It is stored in `job.language` and decides:
+
+- **The scenarios.** Titles, steps and expected results are written in that language.
+  Since prompt v3 the language is an explicit instruction (`<output_language>` in the
+  Designer's user message), not guessed from the description: a Spanish description with
+  `"language": "en"` still gets English scenarios. Labels, buttons and messages are quoted
+  exactly as the page shows them, so a tester can find them on screen.
+- **The report.** Sheet names (`Summary`/`Resumen`, `Scenarios`/`Escenarios`), headers,
+  explanations, the "how to use" section, the Result drop-down and the file name
+  (`test-report-…` / `reporte-pruebas-…`) follow the language.
+
+Priority, category and page type are stored and returned by the API as English codes
+(`critical`, `security`, `login`) in every language, so filters and SQL never depend on the
+language. Only the report translates them for people (`crítica`, `seguridad`, `inicio de
+sesión`). All report texts live in `agents/report_texts.py`. Adding a language means:
+
+1. Add it to `Language` and `LANGUAGE_NAMES` in `config/languages.py`.
+2. Add its entry to `REPORT_TEXTS` in `agents/report_texts.py`.
+
+The prompt needs no change.
+
+Existing databases need the new column once (new ones get it from `init_db`):
+
+```powershell
+docker exec -it postgres_db psql -U myuser -d local -c "ALTER TABLE job ADD COLUMN IF NOT EXISTS language VARCHAR(5) NOT NULL DEFAULT 'en';"
+```
+
+## Tracing with LangSmith
+
+With `LANGSMITH_TRACING=true` and a `LANGSMITH_API_KEY` in `.env`, every job shows up in
+LangSmith (project `LANGSMITH_PROJECT`) as one trace:
+
+```
+job <job_id>                [chain]  tags: job, model:claude-opus-5-5, prompt:v2
+  explorer                  [chain]
+    route_after_explorer
+  designer                  [chain]
+    ChatAnthropic           [llm]    prompt, response, tokens (one per Claude call)
+    route_after_designer
+  documenter                [chain]
+```
+
+- **The graph and its nodes** are traced by LangGraph itself.
+- **The Claude calls** go through the Anthropic SDK, not LangChain, so the Designer's
+  client is wrapped with `langsmith.wrappers.wrap_anthropic`. Without that, the trace shows
+  the `designer` node but not what was asked or answered. This needs `langsmith>=0.14.7`:
+  0.14.4 crashes with `anthropic` 1.x, which removed the old Text Completions API.
+- **Each trace is named `job <job_id>`** and carries `job_id`, `url`, model, effort and
+  prompt version as metadata. In LangSmith you can find a job by its id, or compare runs by
+  model or prompt version (useful for ADR-02 and prompt v3).
+- **Settings**: `config/variables.py` exports every `LANGSMITH_*` value from `.env` to the
+  environment, because the SDK only reads environment variables and pydantic-settings does
+  not export them. Docker's `env_file` already does this; values already in the environment win.
+- **Traces are flushed** at the end of every task, so the last batch is not lost when the
+  Linux worker's forked child exits.
+- **Tests never trace**: `tests/conftest.py` sets `LANGSMITH_TRACING=false` before
+  anything is imported.
+
+Traces contain the page inventories, the app description, the prompts and the generated
+scenarios, and they are stored in LangSmith's cloud. For production, consider
+`LANGSMITH_TRACING_SAMPLING_RATE` (trace a fraction of jobs) or `LANGSMITH_HIDE_INPUTS` /
+`LANGSMITH_HIDE_OUTPUTS` (keep the structure and timings, drop the content). The tokens and
+cost per job remain in `llm_calls` either way.
 
 ## LLM tokens and cost (WTA-18)
 

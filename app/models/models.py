@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from config.languages import DEFAULT_LANGUAGE, Language
 from db.models_db.models_db import JobStatus
 
 
@@ -11,6 +12,9 @@ class JobCreate(BaseModel):
     # str rather than HttpUrl: security.ssrf does the validation so we can return 400 (not 422)
     url: str = Field(..., max_length=2048, description="The url for the test execution")
     description: str | None = Field(None, max_length=500, description="Optional description for the test execution")
+    language: Language = Field(
+        DEFAULT_LANGUAGE, description="Language of the scenarios and the report: 'en' (English) or 'es' (Spanish)"
+    )
 
 
 class JobRead(BaseModel):
@@ -18,6 +22,7 @@ class JobRead(BaseModel):
 
     id: uuid.UUID
     description: str | None = None
+    language: Language = DEFAULT_LANGUAGE
     url: str
     status: JobStatus
     pages_crawled: int

@@ -13,13 +13,15 @@ def _now() -> datetime:
 
 # ---------------------------------------------------------------- Jobs
 
-def create_job(db: Session, url: str, description: str | None = None) -> Job:
+def create_job(db: Session, url: str, description: str | None = None, language: str = "en") -> Job:
     """POST /jobs: create the job in QUEUED state.
 
     `description` is the user's own description of the app; the Designer uses it to weight
     priorities (WTA-15). Blank strings are stored as NULL.
     """
-    job = Job(url=url, description=(description or "").strip() or None, status=JobStatus.QUEUED)
+    job = Job(
+        url=url, description=(description or "").strip() or None, language=language, status=JobStatus.QUEUED,
+    )
     db.add(job)
     db.commit()
     db.refresh(job)

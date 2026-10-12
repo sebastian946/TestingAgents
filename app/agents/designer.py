@@ -34,7 +34,8 @@ from typing import Any, Callable, Iterable, Protocol
 import anthropic
 from pydantic import ValidationError
 
-from config.variables import settings
+from config.languages import DEFAULT_LANGUAGE, LANGUAGE_NAMES
+from config.variables import TRACING_ENABLED, settings
 from models.agent_models import DesignerOutput, TestScenario
 
 PROMPTS_DIR = Path(__file__).parent / "prompts" / "designer"
@@ -203,7 +204,16 @@ def build_inventory(elements: dict[str, Any] | None) -> str:
     return json.dumps(clean, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def render_prompt(page: PageLike, description: str | None, version: str) -> tuple[str, str]:
+def render_prompt(
+    page: PageLike, description: str | None, version: str, language: str = DEFAULT_LANGUAGE
+) -> tuple[str, str]:
+    """System prompt (static, cached) and user message (this page, in this language).
+
+    Older prompt versions without `$language` ignore it: `substitute` only fills the
+    placeholders a template has.
+    """
+    if language not in LANGUAGE_NAMES:
+        raise DesignerFatalError(f"Unsupported language {language!r}; supported: {sorted(LANGUAGE_NAMES)}")
     system, user_template = load_prompt(version)
     user = user_template.substitute(
         url=page.url,
@@ -211,6 +221,7 @@ def render_prompt(page: PageLike, description: str | None, version: str) -> tupl
         page_type=page.page_type or "unknown",
         description=(description or "").strip() or NO_DESCRIPTION,
         inventory=build_inventory(page.elements),
+        language=LANGUAGE_NAMES[language],
     )
     return system, user
 
@@ -241,8 +252,17 @@ def _default_client() -> anthropic.Anthropic:
     # With no key in .env the SDK still resolves ANTHROPIC_API_KEY from the environment
     # or an `ant auth login` profile
     if settings.anthropic_api_key:
-        return anthropic.Anthropic(api_key=settings.anthropic_api_key, **options)
-    return anthropic.Anthropic(**options)
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key, **options)
+    else:
+        client = anthropic.Anthropic(**options)
+    if TRACING_ENABLED:
+        # LangGraph traces the graph and its nodes by itself, but these calls go through the
+        # Anthropic SDK, not LangChain: wrapping the client adds each Claude call (prompt,
+        # response, tokens) as a child run of the `designer` node in LangSmith
+        from langsmith.wrappers import wrap_anthropic
+
+        client = wrap_anthropic(client)
+    return client
 
 
 def _request(client: anthropic.Anthropic, model: str, effort: str, system: str, user: str):
@@ -296,6 +316,7 @@ def design_scenarios(
     model: str | None = None,
     effort: str | None = None,
     on_call: Callable[[CallUsage], None] | None = None,
+    language: str = DEFAULT_LANGUAGE,
 ) -> DesignResult:
     """Generate test scenarios for one crawled page.
 
@@ -304,7 +325,7 @@ def design_scenarios(
     `on_call` receives the usage of every API call, successful or not (WTA-18).
     Raises `DesignerError` if this page cannot get scenarios, `DesignerFatalError` if no page can.
     """
-    system, user = render_prompt(page, description, version or settings.designer_prompt_version)
+    system, user = render_prompt(page, description, version or settings.designer_prompt_version, language)
     client = client or _default_client()
     model = model or settings.designer_model
     effort = effort or settings.designer_effort

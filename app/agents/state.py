@@ -6,7 +6,7 @@ into the state before the next node runs. Ownership:
 
 | Key                       | Written by         | Read by                         |
 |---------------------------|--------------------|---------------------------------|
-| job_id, url, description  | the worker (input) | explorer, designer, documenter  |
+| job_id, url, description, language | the worker (input) | explorer, designer, documenter |
 | pages                     | explorer           | route_after_explorer, designer, fail |
 | scenarios_designed        | designer           | route_after_designer, fail      |
 | pages_without_scenarios   | designer           | documenter, fail                |
@@ -46,6 +46,7 @@ class TestingState(TypedDict):
     job_id: str
     url: str
     description: str | None
+    language: NotRequired[str]  # "en" | "es" (config/languages.py); "en" when missing
 
     # explorer
     pages: NotRequired[list[PageState]]

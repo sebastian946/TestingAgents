@@ -34,7 +34,7 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)):
     except UnsafeURLError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
-    job = db_crud.create_job(db, url=url, description=payload.description)
+    job = db_crud.create_job(db, url=url, description=payload.description, language=payload.language)
     try:
         add_new_job_to_queue(job.id)
     except RedisError:
@@ -169,7 +169,7 @@ def download_report(job_id: uuid.UUID, db: Session = Depends(get_db)):
     return FileResponse(
         path,
         media_type=XLSX_MEDIA_TYPE,
-        filename=download_filename(job.url, job.finished_at or job.created_at),
+        filename=download_filename(job.url, job.finished_at or job.created_at, job.language),
     )
 
 

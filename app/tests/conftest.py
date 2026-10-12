@@ -1,11 +1,17 @@
 """Shared fixtures. The worker tests replace the Designer (in agents.graph, where the
 pipeline nodes look it up) so no test ever reaches the API."""
-import itertools
+import os
 
-import pytest
+# Before any app import: tests must never send traces to LangSmith, even when .env has
+# LANGSMITH_TRACING=true (config.variables only fills variables that are not set yet)
+os.environ["LANGSMITH_TRACING"] = "false"
 
-from agents.designer import CallUsage, DesignResult, PageDesign
-from models.agent_models import TestScenario
+import itertools  # noqa: E402
+
+import pytest  # noqa: E402
+
+from agents.designer import CallUsage, DesignResult, PageDesign  # noqa: E402
+from models.agent_models import TestScenario  # noqa: E402
 
 PRIORITIES = ["critical", "high", "medium", "low"]
 CATEGORIES = ["functional", "negative", "validation", "security"]
@@ -30,6 +36,7 @@ class FakeDesigner:
         self.fatal: Exception | None = None
         self.after_page = None
         self.descriptions: list[str | None] = []
+        self.languages: list[str | None] = []
         self.tokens_per_call = (1000, 500)
         self._rotation = itertools.count()
 
@@ -52,6 +59,7 @@ class FakeDesigner:
 
     def __call__(self, pages, description=None, *, on_result=None, on_call=None, **_options):
         self.descriptions.append(description)
+        self.languages.append(_options.get("language"))
         if self.fatal is not None:
             raise self.fatal
         outcomes = []

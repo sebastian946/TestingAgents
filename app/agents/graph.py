@@ -86,7 +86,7 @@ def explorer(state: TestingState) -> dict:
 
 
 def designer(state: TestingState) -> dict:
-    """Reads job_id, description, pages. Writes scenarios_designed, pages_without_scenarios."""
+    """Reads job_id, description, language, pages. Writes scenarios_designed, pages_without_scenarios."""
     job_uuid = uuid.UUID(state["job_id"])
 
     def persist_scenarios(outcome: PageDesign) -> None:
@@ -123,7 +123,10 @@ def designer(state: TestingState) -> dict:
 
     # A page that fails is skipped; DesignerFatalError (bad key, unknown model) is raised
     pages = [_Page(p) for p in state.get("pages", [])]
-    outcomes = design_pages(pages, state["description"], on_result=persist_scenarios, on_call=log_llm_call)
+    outcomes = design_pages(
+        pages, state["description"], on_result=persist_scenarios, on_call=log_llm_call,
+        language=state.get("language", "en"),
+    )
     designed = sum(len(o.result.scenarios) for o in outcomes if o.result)
     gaps = [PageGap(url=o.page.url, error=o.error or "unknown") for o in outcomes if o.result is None]
     print(f"[graph] designer: {designed} scenarios, {len(gaps)} pages without scenarios")

@@ -9,10 +9,16 @@ API only through Postgres.
 import os
 import sys
 
-from redis.exceptions import RedisError
-from rq import SimpleWorker, Worker
+# Logs carry LLM output and page text (e.g. "→"). The Windows console defaults to cp1252,
+# which cannot encode them and makes logging print "--- Logging error ---" tracebacks
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
-from db.redis.redis_conn import job_queue, redis_client
+from redis.exceptions import RedisError  # noqa: E402
+from rq import SimpleWorker, Worker  # noqa: E402
+
+from db.redis.redis_conn import job_queue, redis_client  # noqa: E402
 
 
 def main() -> int:

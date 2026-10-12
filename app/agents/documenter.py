@@ -34,26 +34,12 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy.orm import Session
 
+from agents.report_texts import display, texts
 from db import db_crud
 
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PRIORITY_ORDER = ["critical", "high", "medium", "low"]
-PRIORITY_MEANING = {
-    "critical": "A core flow is blocked or there is a security or data risk. Run these first.",
-    "high": "Important negative paths and validations on core flows.",
-    "medium": "Secondary flows and validations on non-core forms.",
-    "low": "Cosmetic or minor usability issues.",
-}
 CATEGORY_ORDER = ["functional", "negative", "validation", "security", "usability", "accessibility"]
-CATEGORY_MEANING = {
-    "functional": "The main path does what it promises.",
-    "negative": "Wrong input or misuse is handled correctly.",
-    "validation": "Field rules: required, format, length, allowed values.",
-    "security": "Authentication, access and data exposure.",
-    "usability": "Clarity of messages, labels and flow.",
-    "accessibility": "Labels, keyboard use and focus.",
-}
-RESULT_OPTIONS = ["Not run", "Pass", "Fail", "Blocked"]
 
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
 HEADER_FONT = Font(bold=True, color="FFFFFF")
@@ -71,11 +57,10 @@ THIN = Side(style="thin", color="BFBFBF")
 GRID = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 TOP_WRAP = Alignment(vertical="top", wrap_text=True)
 
-# (header, width) of the Scenarios sheet; widths are in Excel character units
-SCENARIO_COLUMNS = [
-    ("ID", 9), ("Page", 34), ("Page type", 11), ("Title", 42), ("Steps", 62),
-    ("Expected result", 46), ("Priority", 10), ("Category", 13), ("Result", 11), ("Notes", 30),
-]
+# Widths of the Scenarios sheet columns (headers come from report_texts), in Excel
+# character units: ID, Page, Page type, Title, Steps, Expected result, Priority, Category,
+# Result, Notes
+SCENARIO_WIDTHS = [9, 34, 13, 42, 62, 46, 11, 14, 13, 30]
 LINE_HEIGHT_PT = 15
 
 
@@ -87,6 +72,7 @@ class ReportJob:
     status: str
     started_at: datetime | None
     finished_at: datetime | None
+    language: str = "en"  # report language (config/languages.py)
 
 
 @dataclass
@@ -161,7 +147,8 @@ def _summary_sheet(
     scenarios: list[ReportScenario],
     generated_at: datetime,
 ) -> None:
-    ws.title = "Summary"
+    t = texts(job.language)
+    ws.title = t["sheet_summary"]
     ws.sheet_view.showGridLines = False
     for col, width in zip("ABCDE", (40, 52, 26, 14, 12)):
         ws.column_dimensions[col].width = width
@@ -171,16 +158,17 @@ def _summary_sheet(
     by_category = Counter(s.category for s in scenarios)
     uncovered = [p for p in pages if per_page[p.id] == 0]
 
-    _put(ws["A1"], "Test scenario report").font = TITLE_FONT
-    _put(ws["A2"], "Manual test scenarios designed for the pages explored on the site below.").font = MUTED_FONT
+    _put(ws["A1"], t["title"]).font = TITLE_FONT
+    _put(ws["A2"], t["subtitle"]).font = MUTED_FONT
 
+    f = t["facts"]
     facts = [
-        ("Site", job.url),
-        ("App description", job.description or "(not provided)"),
-        ("Report generated (UTC)", generated_at),
-        ("Pages explored", len(pages)),
-        ("Test scenarios", len(scenarios)),
-        ("Pages without scenarios", len(uncovered)),
+        (f["site"], job.url),
+        (f["description"], job.description or t["not_provided"]),
+        (f["generated"], generated_at),
+        (f["pages"], len(pages)),
+        (f["scenarios"], len(scenarios)),
+        (f["uncovered"], len(uncovered)),
     ]
     row = 4
     for label, value in facts:
@@ -188,7 +176,7 @@ def _summary_sheet(
         label_cell.font, label_cell.alignment = LABEL_FONT, Alignment(vertical="top")
         cell = _put(ws.cell(row=row, column=2), value)
         cell.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
-        if label == "Site":
+        if label == f["site"]:
             cell.hyperlink, cell.style = job.url, "Hyperlink"
         row += 1
     ws.row_dimensions[5].height = LINE_HEIGHT_PT * min(_lines_needed(job.description or "", 52), 6)
@@ -196,12 +184,12 @@ def _summary_sheet(
     def breakdown(title: str, label: str, order: list[str], counts: Counter, meaning: dict, color: bool, row: int) -> int:
         _put(ws.cell(row=row, column=1), title).font = SECTION_FONT
         row += 1
-        _header_row(ws, row, [label, "What it means", "", "Scenarios"])
+        _header_row(ws, row, [label, t["meaning"], "", t["count"]])
         ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=3)
         row += 1
         extra = sorted(k for k in counts if k not in order and k is not None)
         for key in [*order, *extra]:
-            name = _put(ws.cell(row=row, column=1), key)
+            name = _put(ws.cell(row=row, column=1), display(key, job.language))
             if color:
                 _style_priority(name, key)
             _put(ws.cell(row=row, column=2), meaning.get(key, "")).alignment = TOP_WRAP
@@ -210,23 +198,23 @@ def _summary_sheet(
             for col in (1, 2, 3, 4):
                 ws.cell(row=row, column=col).border = GRID
             row += 1
-        _put(ws.cell(row=row, column=1), "Total").font = LABEL_FONT
+        _put(ws.cell(row=row, column=1), t["total"]).font = LABEL_FONT
         _put(ws.cell(row=row, column=4), len(scenarios)).font = LABEL_FONT
         return row + 2
 
-    row = breakdown("Scenarios by priority", "Priority", PRIORITY_ORDER, by_priority, PRIORITY_MEANING, True, row + 1)
-    row = breakdown("Scenarios by category", "Category", CATEGORY_ORDER, by_category, CATEGORY_MEANING, False, row)
+    row = breakdown(t["by_priority"], t["priority"], PRIORITY_ORDER, by_priority, t["priority_meaning"], True, row + 1)
+    row = breakdown(t["by_category"], t["category"], CATEGORY_ORDER, by_category, t["category_meaning"], False, row)
 
-    _put(ws.cell(row=row, column=1), "Pages explored").font = SECTION_FONT
+    _put(ws.cell(row=row, column=1), t["pages_section"]).font = SECTION_FONT
     row += 1
-    _header_row(ws, row, ["Page", "Title", "Page type", "Scenarios"])
+    _header_row(ws, row, t["pages_headers"])
     row += 1
     for page in pages:
         url = _put(ws.cell(row=row, column=1), page.url)
         url.hyperlink, url.style = page.url, "Hyperlink"
         url.alignment = Alignment(wrap_text=True, vertical="top")
         _put(ws.cell(row=row, column=2), page.title or "").alignment = TOP_WRAP
-        _put(ws.cell(row=row, column=3), page.page_type or "").alignment = TOP_WRAP
+        _put(ws.cell(row=row, column=3), display(page.page_type, job.language)).alignment = TOP_WRAP
         count = _put(ws.cell(row=row, column=4), per_page[page.id])
         count.alignment = Alignment(vertical="top")
         if per_page[page.id] == 0:
@@ -238,31 +226,25 @@ def _summary_sheet(
         )
         row += 1
     if uncovered:
-        _put(ws.cell(row=row, column=1),
-             "Pages with 0 scenarios could not be covered automatically; review them by hand.").font = MUTED_FONT
+        _put(ws.cell(row=row, column=1), t["uncovered_note"]).font = MUTED_FONT
         row += 1
 
     row += 1
-    _put(ws.cell(row=row, column=1), "How to use this report").font = SECTION_FONT
-    tips = [
-        "1. Open the Scenarios sheet. Each row is one test a person can run in a browser.",
-        "2. Use the filter arrows in the header to show one page, priority or category.",
-        "3. Run the critical and high scenarios first; they cover the flows that matter most.",
-        "4. Follow the steps in order and compare what you see with the expected result.",
-        "5. Record the outcome in the Result column (Pass, Fail, Blocked) and add notes.",
-        "Values in <angle brackets> are placeholders: replace them with real test data.",
-    ]
-    for tip in tips:
+    _put(ws.cell(row=row, column=1), t["how_to"]).font = SECTION_FONT
+    for tip in t["tips"]:
         row += 1
         _put(ws.cell(row=row, column=1), tip)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
 
 
-def _scenarios_sheet(ws: Worksheet, pages: list[ReportPage], scenarios: list[ReportScenario]) -> None:
-    ws.title = "Scenarios"
+def _scenarios_sheet(
+    ws: Worksheet, pages: list[ReportPage], scenarios: list[ReportScenario], language: str = "en"
+) -> None:
+    t = texts(language)
+    ws.title = t["sheet_scenarios"]
     page_by_id = {p.id: p for p in pages}
-    _header_row(ws, 1, [header for header, _ in SCENARIO_COLUMNS])
-    for index, (_, width) in enumerate(SCENARIO_COLUMNS, start=1):
+    _header_row(ws, 1, t["columns"])
+    for index, width in enumerate(SCENARIO_WIDTHS, start=1):
         ws.column_dimensions[get_column_letter(index)].width = width
     ws.row_dimensions[1].height = 22
 
@@ -272,12 +254,12 @@ def _scenarios_sheet(ws: Worksheet, pages: list[ReportPage], scenarios: list[Rep
         values = [
             scenario.code,
             page.url if page else "",
-            page.page_type if page else "",
+            display(page.page_type, language) if page else "",
             scenario.title,
             steps,
             scenario.expected_result,
-            scenario.priority or "",
-            scenario.category or "",
+            display(scenario.priority, language),
+            display(scenario.category, language),
             "",
             "",
         ]
@@ -287,15 +269,15 @@ def _scenarios_sheet(ws: Worksheet, pages: list[ReportPage], scenarios: list[Rep
         _style_priority(ws.cell(row=row, column=7), scenario.priority)
         # Explicit height: not every spreadsheet app auto-fits wrapped rows when opening a file
         lines = max(
-            _lines_needed(str(values[i]), SCENARIO_COLUMNS[i][1]) for i in (1, 3, 4, 5)
+            _lines_needed(str(values[i]), SCENARIO_WIDTHS[i]) for i in (1, 3, 4, 5)
         )
         ws.row_dimensions[row].height = LINE_HEIGHT_PT * min(lines, 25)
 
     last_row = max(len(scenarios) + 1, 2)
     ws.freeze_panes = "B2"  # header and ID stay visible while scrolling
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(SCENARIO_COLUMNS))}{last_row}"
-    result = DataValidation(type="list", formula1=f'"{",".join(RESULT_OPTIONS)}"', allow_blank=True)
-    result.prompt, result.promptTitle = "Pass, Fail, Blocked or Not run", "Result"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(SCENARIO_WIDTHS))}{last_row}"
+    result = DataValidation(type="list", formula1=f'"{",".join(t["result_options"])}"', allow_blank=True)
+    result.prompt, result.promptTitle = t["result_prompt"], t["result_title"]
     ws.add_data_validation(result)
     result.add(f"I2:I{max(last_row, 500)}")
 
@@ -311,9 +293,9 @@ def build_workbook(
     summary = wb.active
     assert isinstance(summary, Worksheet)  # a new Workbook always starts with one worksheet
     _summary_sheet(summary, job, pages, scenarios, generated_at or datetime.now(timezone.utc))
-    _scenarios_sheet(wb.create_sheet(), pages, scenarios)
+    _scenarios_sheet(wb.create_sheet(), pages, scenarios, job.language)
     wb.active = 0
-    wb.properties.title = f"Test scenario report - {job.url}"
+    wb.properties.title = f"{texts(job.language)['doc_title']} - {job.url}"
     wb.properties.creator = "WebTestAgent"
     return wb
 
@@ -324,8 +306,9 @@ def report_file(reports_dir: str | Path, job_id: uuid.UUID | str) -> Path:
     return Path(reports_dir) / f"{job_id}.xlsx"
 
 
-def download_filename(url: str, when: datetime | None) -> str:
-    """Friendly name for the download (WTA-20): test-report-{domain}-{yyyy-mm-dd}.xlsx.
+def download_filename(url: str, when: datetime | None, language: str = "en") -> str:
+    """Friendly name for the download (WTA-20): test-report-{domain}-{yyyy-mm-dd}.xlsx
+    in English, reporte-pruebas-{domain}-{yyyy-mm-dd}.xlsx in Spanish.
 
     The domain drops `www.` and keeps only [a-z0-9.-], so the name is safe in any OS and
     in a Content-Disposition header. Naive datetimes (SQLite) are taken as UTC.
@@ -335,7 +318,7 @@ def download_filename(url: str, when: datetime | None) -> str:
     when = when or datetime.now(timezone.utc)
     if when.tzinfo is not None:
         when = when.astimezone(timezone.utc)
-    return f"test-report-{domain}-{when:%Y-%m-%d}.xlsx"
+    return f"{texts(language)['file_prefix']}-{domain}-{when:%Y-%m-%d}.xlsx"
 
 
 def generate_report(db: Session, job_id: uuid.UUID, reports_dir: str | Path) -> Path:
@@ -343,7 +326,9 @@ def generate_report(db: Session, job_id: uuid.UUID, reports_dir: str | Path) -> 
     job = db_crud.get_job(db, job_id)
     if job is None:
         raise ValueError(f"Job {job_id} does not exist")
-    report_job = ReportJob(job.id, job.url, job.description, job.status.value, job.started_at, job.finished_at)
+    report_job = ReportJob(
+        job.id, job.url, job.description, job.status.value, job.started_at, job.finished_at, job.language,
+    )
     pages = [ReportPage(p.id, p.url, p.title, p.page_type) for p in db_crud.get_pages_by_job(db, job_id)]
     scenarios = [
         ReportScenario(s.scenario_code, s.page_id, s.title, list(s.steps or []), s.expected_result, s.priority, s.category)
