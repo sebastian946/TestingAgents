@@ -505,6 +505,48 @@ on its own. `pyrightconfig.json` and `.vscode/settings.json` already point to it
 still show in red: `Ctrl+Shift+P` → *Python: Select Interpreter* → *Enter interpreter path* →
 `app\.venv\Scripts\python.exe`, then *Developer: Reload Window*.
 
+### Tests
+
+```powershell
+cd app
+uv run pytest                          # everything, about 30 s; never calls the Anthropic API
+uv run pytest tests/test_ssrf.py -v    # one file
+uv run pytest -k retry                 # tests whose name matches
+```
+
+**No test spends tokens.** `tests/conftest.py` gives every test a fake Anthropic key and a
+dead API address (`127.0.0.1:9`), whatever `.env` contains, and turns LangSmith tracing off.
+A call that a test forgot to mock fails at once instead of reaching the real API. To check
+it yourself, run the suite with every outbound HTTP(S) request sent to a dead proxy; it
+stays green:
+
+```powershell
+$env:HTTP_PROXY="http://127.0.0.1:9"; $env:HTTPS_PROXY="http://127.0.0.1:9"; $env:NO_PROXY="127.0.0.1,localhost"
+uv run pytest
+```
+
+**Where the LLM is mocked** (WTA-23). There are three levels, each with its own job:
+
+| Level | What is replaced | What it proves | Tests |
+|---|---|---|---|
+| HTTP transport | only the network (`httpx2.MockTransport`) | the real SDK builds the request we designed, parses responses, and retries 529s by itself | `test_designer_http.py` |
+| SDK method | `client.beta.messages.create` | our logic: validation, self-healing retry, error mapping | `test_designer.py` |
+| Our wrapper | `design_pages` (`fake_designer` fixture) | the graph and the worker, without any LLM | `test_graph.py`, `test_scenarios.py`, ... |
+
+The HTTP level is the most stable against SDK changes: an SDK upgrade that changes the
+request or the retries breaks it. The fake-method level is faster to write for edge cases.
+
+**Reusable fixtures** in `conftest.py`:
+- `login_page_info` (a real `PageInfo` from saucedemo's login page), `login_page` and
+  `contact_page` (pages as the Designer receives them);
+- `fake_designer`, the Designer replacement for graph and worker tests.
+
+**Anti-SSRF** (`test_ssrf.py`) is parametrized over 34 URLs (accepted and rejected:
+schemes, loopback in every spelling, private and link-local ranges, the cloud metadata IP,
+multicast, a domain that resolves to a public and a private IP, malformed URLs). DNS is
+replaced by a table, so the tests need no network. With the validator deliberately broken
+(accepting every IP), 19 of them fail, so they do catch regressions.
+
 ### Adding dependencies
 
 ```powershell
