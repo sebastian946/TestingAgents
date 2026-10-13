@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 
 from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,11 +18,20 @@ class Settings(BaseSettings):
     # Root folder for per-job files (screenshots, reports). Relative to app/; in Docker it
     # is /app/reports, backed by the `reports_data` volume shared by api and worker.
     reports_dir: str = "reports"
+    # RQ queue the API enqueues to and the worker listens on. The integration test uses its
+    # own name, so a developer's worker on the same Redis never steals its jobs (WTA-24)
+    rq_queue_name: str = "default"
+    # Hostnames the anti-SSRF check lets through even if they are internal. TEST ONLY: the
+    # integration test serves its site from 127.0.0.1. Empty in every real deployment.
+    ssrf_allowed_hosts: list[str] = []
 
     # Designer agent (WTA-15). Optional so the API, the crawl and the tests run without a key;
     # the Designer raises a clear error if it is called without one.
     anthropic_api_key: str | None = None
     designer_model: str = "claude-opus-5-5"
+    # "anthropic" (real Claude) or "fake" (deterministic scenarios from the inventory, no
+    # API call, no cost). Fake exists for the end-to-end integration test (WTA-24)
+    designer_mode: Literal["anthropic", "fake"] = "anthropic"
     designer_effort: str = "high"  # low | medium | high | xhigh | max
     designer_prompt_version: str = "v3"  # folder under agents/prompts/designer/
     # WTA-16: the SDK retries 429/529/5xx/timeouts with exponential backoff up to this many

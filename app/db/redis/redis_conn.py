@@ -6,7 +6,7 @@ from rq import Queue
 from config.variables import settings
 
 redis_client = Redis(host=settings.redis_host, port=settings.redis_port, db=0)
-job_queue = Queue(connection=redis_client)
+job_queue = Queue(settings.rq_queue_name, connection=redis_client)
 
 
 def add_new_job_to_queue(job_id: uuid.UUID) -> None:

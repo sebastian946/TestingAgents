@@ -325,6 +325,13 @@ def design_scenarios(
     `on_call` receives the usage of every API call, successful or not (WTA-18).
     Raises `DesignerError` if this page cannot get scenarios, `DesignerFatalError` if no page can.
     """
+    if settings.designer_mode == "fake":
+        # Integration test mode (WTA-24): deterministic scenarios, no API call, no cost
+        from agents.fake_designer import FAKE_MODEL, fake_scenarios
+
+        scenarios = fake_scenarios(page.url, page.page_type, page.elements, language)
+        return DesignResult(scenarios, FAKE_MODEL, 1, 0, 0, 0, 0)
+
     system, user = render_prompt(page, description, version or settings.designer_prompt_version, language)
     client = client or _default_client()
     model = model or settings.designer_model
@@ -410,7 +417,8 @@ def design_pages(
     `DesignerFatalError` (bad key, unknown model...) propagates, since retrying it on the
     remaining pages would only repeat it.
     """
-    client = client or _default_client()  # one client: connection reuse across pages
+    if client is None and settings.designer_mode != "fake":
+        client = _default_client()  # one client: connection reuse across pages
     outcomes: list[PageDesign] = []
     for page in pages:
         try:

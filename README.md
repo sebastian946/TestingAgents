@@ -547,6 +547,51 @@ multicast, a domain that resolves to a public and a private IP, malformed URLs).
 replaced by a table, so the tests need no network. With the validator deliberately broken
 (accepting every IP), 19 of them fail, so they do catch regressions.
 
+### Integration test (WTA-24)
+
+One command, from `app/`, with Docker Desktop running:
+
+```powershell
+uv run pytest -m integration -v
+```
+
+It runs the whole system as in production and checks it from the outside, the way a client
+would. About 20 seconds:
+
+1. Starts PostgreSQL and Redis with docker compose (if they are not up yet) and polls until
+   they accept connections.
+2. Starts the **API** and the **worker** as separate processes, plus a small **local site**
+   (home, login, contact, about) on `127.0.0.1`, so no internet is needed.
+3. For each job: `POST /jobs`, then polls `GET /jobs/{id}` until the status is `done` or
+   `failed`, with a timeout; then checks the pages, the scenarios and the usage, and
+   downloads `GET /jobs/{id}/report`. It opens the Excel and checks that it matches the API:
+   rows, codes and totals by priority.
+4. Covers the happy path in English and in Spanish, a site whose start page answers 404
+   (the job ends `failed` through the graph's `fail` node, and the report answers 409), and
+   checks that the anti-SSRF check still rejects internal addresses.
+
+Every wait is a poll with a timeout (`wait_until`), never a fixed `sleep`: the test moves on
+as soon as something is ready and fails with the worker and API logs if it never is.
+
+**The LLM is replaced by a "fake Designer" mode (`DESIGNER_MODE=fake`), not a mock.** The
+worker is a separate process, so a monkeypatch in the test could not reach it; a
+configuration switch can. In fake mode the Designer builds scenarios from each page's
+inventory with fixed rules (submit with valid data, required fields empty, wrong password),
+with no API key, no cost and the same result every run. The real Designer is covered by
+`test_designer.py` and `test_designer_http.py`; this test covers the plumbing around it.
+
+**Isolation**, so it can run next to your development setup:
+- its own database (`testing_agents_it`), emptied at the start of every run, so your `local`
+  database is never touched;
+- its own RQ queue name per run (`RQ_QUEUE_NAME`), so a worker you left running on the
+  default queue cannot take its jobs;
+- a temporary reports folder;
+- `SSRF_ALLOWED_HOSTS=["127.0.0.1"]`, set only for its own processes, so the local site gets
+  past the anti-SSRF check.
+
+`uv run pytest` on its own skips this test (`addopts = "-m 'not integration'"` in
+`pyproject.toml`), so the everyday suite stays fast and needs no services.
+
 ### Adding dependencies
 
 ```powershell

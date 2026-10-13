@@ -18,6 +18,7 @@ for _stream in (sys.stdout, sys.stderr):
 from redis.exceptions import RedisError  # noqa: E402
 from rq import SimpleWorker, Worker  # noqa: E402
 
+from config.variables import settings  # noqa: E402
 from db.redis.redis_conn import job_queue, redis_client  # noqa: E402
 
 
@@ -37,6 +38,10 @@ def main() -> int:
     # The default Worker runs every job in a forked child (a crash or leak in one job cannot
     # take the worker down). os.fork does not exist on Windows, so there the job runs in the
     # worker process itself; inside Docker (Linux) the forking Worker is used.
+    if settings.designer_mode == "fake":
+        print("WARNING: DESIGNER_MODE=fake. Scenarios come from fixed rules, not from Claude. "
+              "Use it only for tests.", file=sys.stderr)
+    print(f"Listening on RQ queue {settings.rq_queue_name!r}")
     worker_class = Worker if hasattr(os, "fork") else SimpleWorker
     worker = worker_class([job_queue], connection=redis_client)
     try:

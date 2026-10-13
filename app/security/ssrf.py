@@ -23,6 +23,13 @@ def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return ip.is_global and not ip.is_multicast
 
 
+def _allowed_hosts() -> set[str]:
+    """Hostnames exempted from the check: SSRF_ALLOWED_HOSTS, empty unless a test sets it."""
+    from config.variables import settings  # imported late: this module stays dependency-free
+
+    return {h.strip().lower() for h in settings.ssrf_allowed_hosts if h.strip()}
+
+
 def validate_public_url(url: str) -> str:
     """Return the URL if it points to a public http/https host; otherwise raise UnsafeURLError."""
     try:
@@ -36,6 +43,8 @@ def validate_public_url(url: str) -> str:
         raise UnsafeURLError("Only http and https URLs are allowed.")
     if not hostname:
         raise UnsafeURLError("The URL is not valid.")
+    if hostname.lower() in _allowed_hosts():
+        return url.strip()  # explicit test-only exception (SSRF_ALLOWED_HOSTS)
 
     try:
         infos = socket.getaddrinfo(hostname, port or 443, proto=socket.IPPROTO_TCP)
