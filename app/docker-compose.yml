@@ -1,4 +1,3 @@
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -12,7 +11,12 @@ services:
       - "${DB_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-  
+    healthcheck:   # "running" is not "ready": api and worker wait for this
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
   redis:
     image: redis:7-alpine
     container_name: redis_cache
@@ -21,6 +25,11 @@ services:
       - "${REDIS_PORT}:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   api:
     build:
@@ -28,19 +37,28 @@ services:
       target: api
     container_name: api
     restart: unless-stopped
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    # Create the tables that do not exist yet, then serve. init_db is safe to repeat: it only
+    # creates missing tables, so a fresh clone works with no manual step
+    command: sh -c "python -m db.init_db && uvicorn main:app --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
     volumes:
-      - reports_data:/app/reports   # same files as the worker, so the API can serve them later
+      - reports_data:/app/reports   # same files as the worker, so the API can serve the reports
     env_file: ../.env
     environment:
-      ENDPOINT: postgres
+      ENDPOINT: postgres   # inside Docker, hosts are the service names
       REDIS_HOST: redis
-      DB_PORT: 5432
+      DB_PORT: 5432        # the container port, not the 5433 published on your machine
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/Health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   worker:
     build:
@@ -54,12 +72,16 @@ services:
       - reports_data:/app/reports   # screenshots and reports survive container restarts
     env_file: ../.env
     environment:
-      ENDPOINT: postgres      # dentro de Docker, los hosts son los nombres de los servicios
+      ENDPOINT: postgres   # inside Docker, hosts are the service names
       REDIS_HOST: redis
-      DB_PORT: 5432           # puerto interno del contenedor, no el 5433 que expones en tu máquina
+      DB_PORT: 5432        # the container port, not the 5433 published on your machine
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy   # the api creates the tables the worker writes to
 
 
 volumes:

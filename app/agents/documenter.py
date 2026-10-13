@@ -122,7 +122,7 @@ def _numbered(steps: Iterable[str]) -> str:
 
 def _lines_needed(text: str, width: float) -> int:
     """Rough number of wrapped lines a text takes in a column of `width` characters."""
-    chars_per_line = max(int(width * 1.15), 1)
+    chars_per_line = max(int(width * 0.95), 1)  # Excel fits fewer chars than the column width
     return sum(max(1, math.ceil(len(line) / chars_per_line)) for line in (text or "").split("\n"))
 
 

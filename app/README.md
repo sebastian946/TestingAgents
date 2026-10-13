@@ -1,7 +1,7 @@
 # app — backend (FastAPI + SQLAlchemy)
 
-The full documentation (setup, environment variables, API, conventions) is in the
-[repository root README](../README.md).
+Overview and quick start: [repository root README](../README.md).
+Full documentation (setup, environment variables, API, conventions): [docs/guide.md](../docs/guide.md).
 
 Quick commands, from this folder:
 
