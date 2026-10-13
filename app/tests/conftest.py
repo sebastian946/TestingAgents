@@ -1,17 +1,107 @@
-"""Shared fixtures. The worker tests replace the Designer (in agents.graph, where the
-pipeline nodes look it up) so no test ever reaches the API."""
+"""Shared fixtures for the whole suite.
+
+- A safety net (autouse): no test can reach the real Anthropic API or LangSmith, whatever
+  the developer's .env contains. A test that forgot to mock the LLM fails fast on a dead
+  local address instead of spending tokens.
+- Sample pages (`login_page_info`, `login_page`, `contact_page`): realistic inventories, as
+  the explorer extracts them, for any test that needs a page to design.
+- `fake_designer`: replaces `design_pages` in agents.graph for graph and worker tests.
+"""
 import os
 
 # Before any app import: tests must never send traces to LangSmith, even when .env has
 # LANGSMITH_TRACING=true (config.variables only fills variables that are not set yet)
 os.environ["LANGSMITH_TRACING"] = "false"
 
+FAKE_ANTHROPIC_KEY = "sk-ant-test-not-a-real-key"
+# Port 9 ("discard") on localhost: nothing listens, so a request fails at once
+DEAD_ANTHROPIC_URL = "http://127.0.0.1:9"
+
 import itertools  # noqa: E402
 
 import pytest  # noqa: E402
 
+from dataclasses import dataclass  # noqa: E402
+from typing import Any  # noqa: E402
+
 from agents.designer import CallUsage, DesignResult, PageDesign  # noqa: E402
+from agents.page_info import PageInfo  # noqa: E402
 from models.agent_models import TestScenario  # noqa: E402
+
+
+# --------------------------------------------------------------------------- safety net
+
+@pytest.fixture(autouse=True)
+def no_real_anthropic_api(monkeypatch):
+    """Every test runs with a fake key and a dead API address, never the .env ones."""
+    from config.variables import settings
+
+    monkeypatch.setattr(settings, "anthropic_api_key", FAKE_ANTHROPIC_KEY)
+    monkeypatch.setattr(settings, "designer_max_retries", 0)  # fail fast if a call slips through
+    monkeypatch.setenv("ANTHROPIC_API_KEY", FAKE_ANTHROPIC_KEY)
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", DEAD_ANTHROPIC_URL)
+
+
+# ------------------------------------------------------------------------ sample pages
+
+@dataclass
+class SamplePage:
+    """What the Designer receives for a page (url, title, page_type, elements)."""
+
+    url: str
+    title: str | None
+    page_type: str | None
+    elements: dict[str, Any] | None
+
+
+# Inventory the explorer extracted from https://www.saucedemo.com/ (WTA-11)
+LOGIN_EVALUATE = {
+    "headings": [],
+    "forms": [{
+        "action": None, "method": "get", "submit_text": "Login", "virtual": False,
+        "fields": [
+            {"tag": "input", "type": "text", "name": "user-name", "id": "user-name", "label": "Username",
+             "placeholder": "Username", "required": False, "options": []},
+            {"tag": "input", "type": "password", "name": "password", "id": "password", "label": "Password",
+             "placeholder": "Password", "required": False, "options": []},
+        ],
+    }],
+    "buttons": [], "nav_links": [], "signals": {"word_count": 16},
+}
+
+CONTACT_EVALUATE = {
+    "headings": ["Contact us"],
+    "forms": [{
+        "action": "https://shop.example/send", "method": "post", "submit_text": "Send message", "virtual": False,
+        "fields": [
+            {"tag": "input", "type": "text", "name": "name", "id": None, "label": "Your name",
+             "placeholder": None, "required": True, "options": []},
+            {"tag": "input", "type": "email", "name": "email", "id": None, "label": "Email",
+             "placeholder": "you@example.com", "required": True, "options": []},
+            {"tag": "textarea", "type": "textarea", "name": "message", "id": None, "label": "Message",
+             "placeholder": None, "required": False, "options": []},
+        ],
+    }],
+    "buttons": [], "nav_links": [{"text": "Home", "href": "https://shop.example/"}], "signals": {"word_count": 40},
+}
+
+
+@pytest.fixture
+def login_page_info() -> PageInfo:
+    """A real login page inventory, as a PageInfo object."""
+    return PageInfo.from_evaluate("https://www.saucedemo.com/", "Swag Labs", LOGIN_EVALUATE)
+
+
+@pytest.fixture
+def login_page(login_page_info) -> SamplePage:
+    """The login page as the Designer receives it."""
+    return SamplePage("https://www.saucedemo.com/", "Swag Labs", "login", login_page_info.to_dict())
+
+
+@pytest.fixture
+def contact_page() -> SamplePage:
+    info = PageInfo.from_evaluate("https://shop.example/contact", "Contact", CONTACT_EVALUATE)
+    return SamplePage("https://shop.example/contact", "Contact", "form", info.to_dict())
 
 PRIORITIES = ["critical", "high", "medium", "low"]
 CATEGORIES = ["functional", "negative", "validation", "security"]

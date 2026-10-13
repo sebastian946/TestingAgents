@@ -31,7 +31,7 @@ docker compose --env-file .env -f app/docker-compose.yml up -d --build
 docker compose --env-file .env -f app/docker-compose.yml exec worker python -m worker.check_browser   # Playwright smoke test
 ```
 
-Tests use pytest (`app/tests/`, run from `app/`). No linter or formatter is configured yet. Pyright/Pylance is pointed at `app/.venv` via the root `pyrightconfig.json`.
+Tests use pytest (`app/tests/`, run from `app/`). `tests/conftest.py` has an autouse safety net (`no_real_anthropic_api`: fake key, `ANTHROPIC_BASE_URL=http://127.0.0.1:9`, `designer_max_retries=0`) so no test can reach the real API; keep it. LLM mocking has three levels: HTTP transport with `httpx2.MockTransport` and the real SDK (`tests/test_designer_http.py`, `ScriptedAnthropic`, use `retry-after-ms: 1` on error responses to keep SDK retries instant), the SDK method (`FakeClient` in `tests/test_designer.py`), and our wrapper (`fake_designer`). Shared sample pages: `login_page_info`, `login_page`, `contact_page`. SSRF tests (`tests/test_ssrf.py`) replace `ssrf.socket.getaddrinfo` with a table; never let them hit real DNS. No linter or formatter is configured yet. Pyright/Pylance is pointed at `app/.venv` via the root `pyrightconfig.json`.
 
 `.env` is copied from `.env.example`. `DB_PORT` is 5433 on purpose to avoid colliding with a locally installed Postgres. Postgres credentials are fixed when the volume is first created; changing them requires `docker compose ... down -v`.
 
