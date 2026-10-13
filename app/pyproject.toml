@@ -33,6 +33,8 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
+# Imports are rooted at app/ (`from agents...`); the `pytest` launcher does not add the cwd itself
+pythonpath = ["."]
 markers = [
     "integration: end-to-end test against the docker-compose services (run: uv run pytest -m integration)",
 ]
