@@ -31,3 +31,10 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: end-to-end test against the docker-compose services (run: uv run pytest -m integration)",
+]
+# The default `uv run pytest` stays fast and needs no services; `-m integration` overrides this
+addopts = "-m 'not integration'"
