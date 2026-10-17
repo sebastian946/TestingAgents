@@ -23,6 +23,7 @@ from db.models_db.models_db import Job, LlmCall, Page
 from main import app
 from models.agent_models import DesignerOutput, TestScenario
 from agents import graph
+from tests.conftest import sign_in
 from worker import tasks
 
 URL = "https://shop.example/"
@@ -197,6 +198,10 @@ def test_usage_endpoint(sessions, fake_designer):
     app.dependency_overrides[get_db] = override_db
     try:
         client = TestClient(app)
+        user_id = sign_in(client)
+        with sessions() as db:  # the worker-created job gets an owner, as POST /jobs would give it
+            db.get(Job, job_id).user_id = user_id
+            db.commit()
         body = client.get(f"/jobs/{job_id}/usage").json()
         assert body["calls"] == 3 and body["output_tokens"] == 1_500
         assert body["cost_usd"] == pytest.approx(3 * estimate_cost_usd("claude-opus-5-5", 1_000, 500))

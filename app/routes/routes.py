@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
@@ -9,12 +10,23 @@ from agents.documenter import XLSX_MEDIA_TYPE, download_filename, generate_repor
 from config.variables import settings
 from db import db_crud
 from db.conn import get_db
-from db.models_db.models_db import JobStatus
+from db.models_db.models_db import Job, JobStatus, User
 from db.redis.redis_conn import add_new_job_to_queue
 from models.models import JobCreate, JobRead, JobUsage, PageRead, ScenarioRead
+from security.auth import get_current_user
 from security.ssrf import UnsafeURLError, validate_public_url
 
-router = APIRouter(prefix="/jobs", tags=["jobs"])
+# Every route needs a logged-in user (WTA-26): the dependency runs before the handler and
+# answers 401 by itself. Jobs are then scoped to that user: another user's job is a 404.
+router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(get_current_user)])
+
+
+def owned_job(job_id: uuid.UUID, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Job:
+    """Path dependency: the job in the URL, only if it belongs to the caller."""
+    job = db_crud.get_user_job(db, user.id, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+    return job
 
 
 @router.post(
@@ -23,18 +35,30 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
     response_model=JobRead,
     summary="Create a new job test execution",
 )
-def create_job(payload: JobCreate, db: Session = Depends(get_db)):
-    """Receive the URL, store the job as `queued` and respond 202.
+def create_job(payload: JobCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Receive the URL, store the job as `queued` for the caller and respond 202.
 
-    The test is NOT run here: the worker will process it (next task on the board).
-    Responds 400 if the URL is not http/https or points to an internal network (anti-SSRF).
+    The test is NOT run here: the worker processes it; poll GET /jobs/{id}.
+    Responds 400 if the URL is not http/https or points to an internal network (anti-SSRF),
+    and 429 once the user has created `AUTH_MAX_JOBS_PER_HOUR` jobs in the last hour: each
+    job spends real LLM money, so a leaked token or a loop cannot run up the bill.
     """
     try:
         url = validate_public_url(payload.url)
     except UnsafeURLError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
-    job = db_crud.create_job(db, url=url, description=payload.description, language=payload.language)
+    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    if db_crud.count_jobs_since(db, user.id, since) >= settings.auth_max_jobs_per_hour:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Limit of {settings.auth_max_jobs_per_hour} jobs per hour reached. Try again later.",
+            headers={"Retry-After": "3600"},
+        )
+
+    job = db_crud.create_job(
+        db, url=url, description=payload.description, language=payload.language, user_id=user.id,
+    )
     try:
         add_new_job_to_queue(job.id)
     except RedisError:
@@ -52,8 +76,8 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)):
     response_model=list[JobRead],
     summary="List jobs",
 )
-def list_jobs(limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
-    return db_crud.list_jobs(db, limit=limit, offset=offset)
+def list_jobs(limit: int = 50, offset: int = 0, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db_crud.list_jobs(db, limit=limit, offset=offset, user_id=user.id)
 
 
 @router.get(
@@ -61,13 +85,7 @@ def list_jobs(limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
     response_model=JobRead,
     summary="Get job detail",
 )
-def get_job(job_id: uuid.UUID, db: Session = Depends(get_db)):
-    job = db_crud.get_job(db, job_id)
-    if job is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job {job_id} not found",
-        )
+def get_job(job: Job = Depends(owned_job)):
     return job
 
 
@@ -76,10 +94,8 @@ def get_job(job_id: uuid.UUID, db: Session = Depends(get_db)):
     response_model=list[PageRead],
     summary="Pages crawled for a job",
 )
-def get_job_pages(job_id: uuid.UUID, db: Session = Depends(get_db)):
-    if db_crud.get_job(db, job_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
-    return db_crud.get_pages_by_job(db, job_id)
+def get_job_pages(job: Job = Depends(owned_job), db: Session = Depends(get_db)):
+    return db_crud.get_pages_by_job(db, job.id)
 
 
 @router.get(
@@ -87,10 +103,8 @@ def get_job_pages(job_id: uuid.UUID, db: Session = Depends(get_db)):
     response_model=list[ScenarioRead],
     summary="Scenarios generated for a job",
 )
-def get_job_scenarios(job_id: uuid.UUID, db: Session = Depends(get_db)):
-    if db_crud.get_job(db, job_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
-    return db_crud.get_scenarios_by_job(db, job_id)
+def get_job_scenarios(job: Job = Depends(owned_job), db: Session = Depends(get_db)):
+    return db_crud.get_scenarios_by_job(db, job.id)
 
 
 @router.get(
@@ -98,10 +112,8 @@ def get_job_scenarios(job_id: uuid.UUID, db: Session = Depends(get_db)):
     response_model=JobUsage,
     summary="LLM tokens and estimated cost of a job",
 )
-def get_job_usage(job_id: uuid.UUID, db: Session = Depends(get_db)):
-    if db_crud.get_job(db, job_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
-    return db_crud.get_job_usage(db, job_id)
+def get_job_usage(job: Job = Depends(owned_job), db: Session = Depends(get_db)):
+    return db_crud.get_job_usage(db, job.id)
 
 
 REPORT_NOT_READY_RETRY_SECONDS = 15
@@ -121,7 +133,7 @@ def _plural(count: int, noun: str) -> str:
         409: {"description": "The job exists but has no report: still running, or failed"},
     },
 )
-def download_report(job_id: uuid.UUID, db: Session = Depends(get_db)):
+def download_report(job: Job = Depends(owned_job), db: Session = Depends(get_db)):
     """Return the job's Excel report as a download named test-report-{domain}-{date}.xlsx.
 
     404 only when the job does not exist. A job that exists but has no report yet answers
@@ -130,10 +142,7 @@ def download_report(job_id: uuid.UUID, db: Session = Depends(get_db)):
     While the job runs, the 409 carries `Retry-After` and the progress; a failed job never
     gets a report, so its 409 says why. `detail.status` lets clients branch on the case.
     """
-    job = db_crud.get_job(db, job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
-
+    job_id = job.id
     if job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -178,6 +187,5 @@ def download_report(job_id: uuid.UUID, db: Session = Depends(get_db)):
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a job and its pages/scenarios",
 )
-def delete_job(job_id: uuid.UUID, db: Session = Depends(get_db)):
-    if not db_crud.delete_job(db, job_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+def delete_job(job: Job = Depends(owned_job), db: Session = Depends(get_db)):
+    db_crud.delete_job(db, job.id)

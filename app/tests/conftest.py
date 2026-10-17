@@ -172,6 +172,22 @@ class FakeDesigner:
         return outcomes
 
 
+# ---------------------------------------------------------------- auth (WTA-26)
+
+def sign_in(client, email: str = "tester@example.com", password: str = "correct-horse-battery") -> "uuid.UUID":
+    """Register an account through the API and make `client` send its token from now on.
+
+    Every /jobs route needs a user, and a job is only visible to its owner: tests that
+    create jobs straight in the database pass the returned id as `user_id`.
+    """
+    import uuid
+
+    response = client.post("/auth/register", json={"email": email, "password": password})
+    assert response.status_code == 201, response.text
+    client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"
+    return uuid.UUID(response.json()["user"]["id"])
+
+
 @pytest.fixture
 def fake_designer(monkeypatch) -> FakeDesigner:
     from agents import graph

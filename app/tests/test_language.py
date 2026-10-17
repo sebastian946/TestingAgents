@@ -25,6 +25,7 @@ from db.conn import Base, get_db
 from main import app
 from models.agent_models import DesignerOutput, TestScenario
 from routes import routes
+from tests.conftest import sign_in
 from worker import tasks
 
 URL = "https://shop.example/"
@@ -61,7 +62,9 @@ def client(sessions, monkeypatch):
             yield db
 
     app.dependency_overrides[get_db] = override_db
-    yield TestClient(app)
+    client = TestClient(app)
+    client.user_id = sign_in(client)
+    yield client
     app.dependency_overrides.clear()
 
 
@@ -185,7 +188,7 @@ def test_download_name_follows_the_language():
 
 def test_report_endpoint_serves_the_spanish_name(client, sessions):
     with sessions() as db:
-        job_id = db_crud.create_job(db, url=URL, language="es").id
+        job_id = db_crud.create_job(db, url=URL, language="es", user_id=client.user_id).id
         db_crud.mark_job_running(db, job_id)
         page = db_crud.create_page(db, job_id, url=f"{URL}login", page_type="login")
         db_crud.create_scenarios(db, job_id, page.id, [{"title": "t", "steps": ["s"], "expected_result": "r",

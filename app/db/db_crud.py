@@ -4,23 +4,53 @@ from datetime import datetime, timezone
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from db.models_db.models_db import Job, JobStatus, LlmCall, Page, Scenario
+from db.models_db.models_db import Job, JobStatus, LlmCall, Page, Scenario, User
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# --------------------------------------------------------------- Users (WTA-26)
+
+def create_user(db: Session, email: str, password_hash: str) -> User:
+    """Create an account. The caller hashes the password (security/auth.py) and checks the
+    email is free first (`get_user_by_email`); the unique constraint is the last defence."""
+    user = User(email=email.strip().lower(), password_hash=password_hash)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def get_user(db: Session, user_id: uuid.UUID) -> User | None:
+    return db.get(User, user_id)
+
+
+def get_user_by_email(db: Session, email: str) -> User | None:
+    return db.scalars(select(User).where(User.email == email.strip().lower())).first()
+
+
+def count_jobs_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:
+    """Jobs a user created at or after `since` (the per-hour limit in POST /jobs)."""
+    stmt = select(func.count()).select_from(Job).where(Job.user_id == user_id, Job.created_at >= since)
+    return db.scalar(stmt) or 0
+
+
 # ---------------------------------------------------------------- Jobs
 
-def create_job(db: Session, url: str, description: str | None = None, language: str = "en") -> Job:
+def create_job(
+    db: Session, url: str, description: str | None = None, language: str = "en", user_id: uuid.UUID | None = None,
+) -> Job:
     """POST /jobs: create the job in QUEUED state.
 
     `description` is the user's own description of the app; the Designer uses it to weight
-    priorities (WTA-15). Blank strings are stored as NULL.
+    priorities (WTA-15). Blank strings are stored as NULL. `user_id` is the owner: the API
+    always sets it, only internal tests create ownerless jobs.
     """
     job = Job(
         url=url, description=(description or "").strip() or None, language=language, status=JobStatus.QUEUED,
+        user_id=user_id,
     )
     db.add(job)
     db.commit()
@@ -29,8 +59,13 @@ def create_job(db: Session, url: str, description: str | None = None, language: 
 
 
 def get_job(db: Session, job_id: uuid.UUID) -> Job | None:
-    """GET /jobs/{id}."""
+    """GET /jobs/{id}, without ownership check (the worker and internal code use it)."""
     return db.get(Job, job_id)
+
+
+def get_user_job(db: Session, user_id: uuid.UUID, job_id: uuid.UUID) -> Job | None:
+    """A job only if it belongs to `user_id`; another user's job looks like it does not exist."""
+    return db.scalars(select(Job).where(Job.id == job_id, Job.user_id == user_id)).first()
 
 
 def get_job_with_details(db: Session, job_id: uuid.UUID) -> Job | None:
@@ -43,8 +78,11 @@ def get_job_with_details(db: Session, job_id: uuid.UUID) -> Job | None:
     return db.scalars(stmt).first()
 
 
-def list_jobs(db: Session, limit: int = 50, offset: int = 0) -> list[Job]:
+def list_jobs(db: Session, limit: int = 50, offset: int = 0, user_id: uuid.UUID | None = None) -> list[Job]:
+    """Newest first. With `user_id`, only that user's jobs (what the API always does)."""
     stmt = select(Job).order_by(Job.created_at.desc()).limit(limit).offset(offset)
+    if user_id is not None:
+        stmt = stmt.where(Job.user_id == user_id)
     return list(db.scalars(stmt))
 
 

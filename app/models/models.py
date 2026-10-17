@@ -2,10 +2,37 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from config.languages import DEFAULT_LANGUAGE, Language
 from db.models_db.models_db import JobStatus
+
+
+# ------------------------------------------------------------------ auth (WTA-26)
+
+class UserCredentials(BaseModel):
+    """Body of POST /auth/register and POST /auth/login."""
+
+    email: EmailStr
+    # argon2 has no practical length limit, the cap only keeps absurd bodies out
+    password: str = Field(..., min_length=8, max_length=128, description="At least 8 characters")
+
+
+class UserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    email: str
+    created_at: datetime
+
+
+class Token(BaseModel):
+    """What register and login return: the JWT for `Authorization: Bearer <access_token>`."""
+
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = Field(description="Seconds until the token expires")
+    user: UserRead
 
 
 class JobCreate(BaseModel):

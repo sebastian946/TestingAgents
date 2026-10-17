@@ -19,6 +19,7 @@ from db import db_crud
 from db.conn import Base, get_db
 from db.models_db.models_db import Job, JobStatus
 from main import app
+from tests.conftest import sign_in
 
 
 @pytest.fixture
@@ -35,15 +36,17 @@ def env(tmp_path: Path, monkeypatch):
             yield db
 
     app.dependency_overrides[get_db] = override_db
-    yield factory, reports, TestClient(app)
+    client = TestClient(app)
+    client.user_id = sign_in(client)  # the jobs below belong to this account
+    yield factory, reports, client
     app.dependency_overrides.clear()
     engine.dispose()
 
 
-def _job(factory, url="https://www.Shop-Example.com:8443/home", status="done", scenarios=2, error=None):
-    """Create a job in the given state, with one page and some scenarios."""
+def _job(factory, user_id, url="https://www.Shop-Example.com:8443/home", status="done", scenarios=2, error=None):
+    """Create a job for `user_id` in the given state, with one page and some scenarios."""
     with factory() as db:
-        job = db_crud.create_job(db, url=url)
+        job = db_crud.create_job(db, url=url, user_id=user_id)
         db_crud.mark_job_running(db, job.id)
         page = db_crud.create_page(db, job.id, url=url, title="Home", page_type="login")
         db_crud.create_scenarios(db, job.id, page.id, [
@@ -62,7 +65,7 @@ def _job(factory, url="https://www.Shop-Example.com:8443/home", status="done", s
 
 def test_a_finished_job_downloads_as_a_real_xlsx_with_a_friendly_name(env):
     factory, reports, client = env
-    job_id = _job(factory)
+    job_id = _job(factory, client.user_id)
     with factory() as db:
         generate_report(db, job_id, reports)
 
@@ -81,7 +84,7 @@ def test_a_finished_job_downloads_as_a_real_xlsx_with_a_friendly_name(env):
 @pytest.mark.parametrize("state", ["queued", "running"])
 def test_a_job_in_progress_answers_409_with_progress_and_retry_after(env, state):
     factory, _, client = env
-    job_id = _job(factory, status=state)
+    job_id = _job(factory, client.user_id, status=state)
 
     response = client.get(f"/jobs/{job_id}/report")
 
@@ -94,7 +97,7 @@ def test_a_job_in_progress_answers_409_with_progress_and_retry_after(env, state)
 
 def test_a_failed_job_answers_409_explaining_why(env):
     factory, _, client = env
-    job_id = _job(factory, status="failed", error="The Anthropic API key is missing or invalid.")
+    job_id = _job(factory, client.user_id, status="failed", error="The Anthropic API key is missing or invalid.")
 
     response = client.get(f"/jobs/{job_id}/report")
 
@@ -110,9 +113,21 @@ def test_an_unknown_job_is_404(env):
     assert response.status_code == 404 and "not found" in response.json()["detail"]
 
 
+def test_another_users_job_is_404_too(env):
+    """Ownership: a job id that exists but belongs to someone else looks like it does not."""
+    factory, _, client = env
+    job_id = _job(factory, client.user_id)
+    other = TestClient(app)
+    sign_in(other, email="someone-else@example.com")
+    assert other.get(f"/jobs/{job_id}/report").status_code == 404
+    assert other.get(f"/jobs/{job_id}").status_code == 404
+    assert other.delete(f"/jobs/{job_id}").status_code == 404
+    assert client.get(f"/jobs/{job_id}").status_code == 200  # still there for its owner
+
+
 def test_a_done_job_without_its_file_gets_the_report_rebuilt(env):
     factory, reports, client = env
-    job_id = _job(factory, scenarios=3)  # done, but no report was ever written
+    job_id = _job(factory, client.user_id, scenarios=3)  # done, but no report was ever written
     assert not report_file(reports, job_id).exists()
 
     response = client.get(f"/jobs/{job_id}/report")

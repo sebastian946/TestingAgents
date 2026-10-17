@@ -71,10 +71,16 @@ def wait_until(check: Callable[[], Any], timeout: float, what: str, interval: fl
 
 # --------------------------------------------------------------------- HTTP helpers
 
-def http(method: str, url: str, body: dict | None = None) -> tuple[int, dict[str, str], bytes]:
+# Filled by the `stack` fixture once the API is up: every request after that is authenticated
+AUTH_HEADERS: dict[str, str] = {}
+
+
+def http(method: str, url: str, body: dict | None = None, auth: bool = True) -> tuple[int, dict[str, str], bytes]:
     data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(url, data=data, method=method,
-                                     headers={"Content-Type": "application/json"} if data else {})
+    headers = {"Content-Type": "application/json"} if data else {}
+    if auth:
+        headers.update(AUTH_HEADERS)
+    request = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return response.status, dict(response.headers), response.read()
@@ -185,11 +191,12 @@ def services():
     wait_until(lambda: Redis(host=settings.redis_host, port=settings.redis_port, socket_timeout=2).ping(),
                SERVICE_TIMEOUT, "Redis")
 
-    # A database of its own: the test never touches your development data
+    # A database of its own, recreated every run: the test never touches your development
+    # data, and a schema change since the last run (init_db adds tables, never columns)
+    # cannot leave it stale. FORCE closes connections a crashed previous run left behind
     with psycopg.connect(admin_dsn, autocommit=True) as conn:
-        exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (IT_DB_NAME,)).fetchone()
-        if not exists:
-            conn.execute(f'CREATE DATABASE "{IT_DB_NAME}"')
+        conn.execute(f'DROP DATABASE IF EXISTS "{IT_DB_NAME}" WITH (FORCE)')
+        conn.execute(f'CREATE DATABASE "{IT_DB_NAME}"')
     return settings
 
 
@@ -219,7 +226,7 @@ def stack(services, tmp_path_factory):
     dsn = (f"host={settings.endpoint} port={settings.db_port} user={settings.db_user} "
            f"password={settings.db_password} dbname={IT_DB_NAME}")
     with psycopg.connect(dsn, autocommit=True) as conn:  # start every run from empty tables
-        conn.execute("TRUNCATE llm_calls, scenarios, pages, job CASCADE")
+        conn.execute("TRUNCATE llm_calls, scenarios, pages, job, users CASCADE")
 
     logs = {name: open(run_dir / f"{name}.log", "w", encoding="utf-8") for name in ("api", "worker")}
     api = subprocess.Popen([sys.executable, "-m", "uvicorn", "main:app", "--port", str(api_port)],
@@ -231,6 +238,12 @@ def stack(services, tmp_path_factory):
         wait_until(lambda: http("GET", f"{base}/Health")[0] == 200, SERVICE_TIMEOUT, "the API /Health")
         wait_until(lambda: "Listening on" in (run_dir / "worker.log").read_text(encoding="utf-8"),
                    SERVICE_TIMEOUT, "the worker to start listening")
+        # A real account through the real API (WTA-26): the tables were just truncated, so
+        # the email is free; the token is sent by `http` from here on
+        status, _, body = http("POST", f"{base}/auth/register",
+                               {"email": "integration@example.com", "password": "integration-test"}, auth=False)
+        assert status == 201, f"POST /auth/register -> {status}: {body!r}"
+        AUTH_HEADERS["Authorization"] = f"Bearer {json.loads(body)['access_token']}"
         yield {"api": base, "run_dir": run_dir}
     finally:
         for process in (api, worker):
@@ -331,3 +344,24 @@ def test_an_internal_url_is_still_rejected_by_the_api(stack):
     """The allowlist opens 127.0.0.1 only: the anti-SSRF check still guards everything else."""
     status, _, body = http("POST", f"{stack['api']}/jobs", {"url": "http://169.254.169.254/latest/meta-data/"})
     assert status == 400 and "disallowed" in json.loads(body)["detail"]
+
+
+def test_the_api_refuses_anonymous_and_foreign_requests(stack, site_url):
+    """Without a token nothing under /jobs answers; with another account's token a job is a 404."""
+    status, headers, _ = http("GET", f"{stack['api']}/jobs", auth=False)
+    assert status == 401 and {k.lower(): v for k, v in headers.items()}.get("www-authenticate") == "Bearer"
+    status, _, _ = http("POST", f"{stack['api']}/jobs", {"url": f"{site_url}/"}, auth=False)
+    assert status == 401
+
+    mine = get_json(f"{stack['api']}/jobs")
+    assert mine, "the earlier tests created jobs for this account"
+    status, _, body = http("POST", f"{stack['api']}/auth/register",
+                           {"email": "intruder@example.com", "password": "intruder-test"}, auth=False)
+    assert status == 201
+    token = json.loads(body)["access_token"]
+    request = urllib.request.Request(f"{stack['api']}/jobs/{mine[0]['id']}", headers={"Authorization": f"Bearer {token}"})
+    try:
+        urllib.request.urlopen(request, timeout=30)
+        assert False, "another user's job must not be readable"
+    except urllib.error.HTTPError as err:
+        assert err.code == 404

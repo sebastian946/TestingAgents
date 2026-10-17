@@ -24,6 +24,24 @@ class Settings(BaseSettings):
     # Hostnames the anti-SSRF check lets through even if they are internal. TEST ONLY: the
     # integration test serves its site from 127.0.0.1. Empty in every real deployment.
     ssrf_allowed_hosts: list[str] = []
+    # Redis AUTH password; None for the local compose, set by docker-compose.prod.yml (WTA-26)
+    redis_password: str | None = None
+    # SQLAlchemy echo: every SQL statement (LLM text included) goes to the console. Handy
+    # locally, noise and disk usage in production, where the prod compose turns it off
+    sql_echo: bool = True
+    # Browser origins allowed by CORS. "*" for local development; in production the exact
+    # origin of the frontend, e.g. ["https://app.example.com"]
+    cors_origins: list[str] = ["*"]
+
+    # Authentication (WTA-26): users sign up with email + password and get a JWT (HS256)
+    # signed with this key. Generate one with
+    #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+    # Changing it logs every user out (their tokens stop verifying); nothing else is lost.
+    # Empty here so the worker and the tests do not need it; the API refuses to start without it
+    auth_secret_key: str = ""
+    auth_token_expire_minutes: int = 60 * 24  # one day
+    # Jobs a user may create per rolling hour: each one costs real LLM money (ADR-06)
+    auth_max_jobs_per_hour: int = 20
 
     # Designer agent (WTA-15). Optional so the API, the crawl and the tests run without a key;
     # the Designer raises a clear error if it is called without one.

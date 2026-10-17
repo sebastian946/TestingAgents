@@ -10,7 +10,8 @@ real browser, Claude designs test scenarios for every page, and you get an Excel
 *A real report: saucedemo.com, 8 scenarios, about 20 seconds and US$0.04 of LLM spend.*
 
 **Stack:** FastAPI · PostgreSQL 16 · Redis 7 + RQ · Playwright (Chromium) · LangGraph ·
-Claude (official `anthropic` SDK, structured outputs) · openpyxl · LangSmith (optional) · uv · pytest
+Claude (official `anthropic` SDK, structured outputs) · openpyxl · LangSmith (optional) · uv · pytest ·
+React + Vite + TypeScript + Tailwind (dashboard)
 
 ## Architecture
 
@@ -116,6 +117,18 @@ docker compose --env-file .env -f app/docker-compose.yml down
 
 Without an API key the API and the crawl still work, but every job fails in the designer step.
 
+### The dashboard
+
+The web UI (`frontend/`) is a React single-page app: sign up, create jobs, watch them run,
+browse the scenarios and download the report. In production it is built into the Caddy
+image and served at `https://DOMAIN/` next to the API. For development:
+
+```bash
+cd frontend
+npm install
+npm run dev     # http://localhost:5173 (the API must be running on :8000)
+```
+
 <details>
 <summary><b>Running without Docker for the API and the worker (development)</b></summary>
 
@@ -140,18 +153,33 @@ The full guide covers DBeaver, VS Code, LangSmith and debugging: [docs/guide.md]
 
 ## API
 
+Every `/jobs` route needs an account: register once, send the token in every request
+(`Authorization: Bearer <access_token>`), and you only see your own jobs.
+
+```bash
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com", "password": "a-long-password"}'
+# 201 {"access_token": "eyJ...", "token_type": "bearer", "expires_in": 86400, "user": {...}}
+export TOKEN=eyJ...
+```
+
+`POST /auth/login` takes the same body and returns the same token; `GET /auth/me` says who
+the token belongs to. Tokens last `AUTH_TOKEN_EXPIRE_MINUTES` (default one day).
+
 The three endpoints of the main flow. The responses below are real, trimmed.
 
 ### 1. Create a job: `POST /jobs`
 
 ```bash
 curl -X POST http://localhost:8000/jobs \
-  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"url": "https://www.saucedemo.com/", "description": "Online clothing store. Login is the entry point.", "language": "en"}'
 ```
 
 `description` is optional but improves the scenarios a lot: tell the agent what the app does.
 `language` is `en` (default) or `es`, and sets the language of the scenarios and the report.
+Each account may create `AUTH_MAX_JOBS_PER_HOUR` jobs per hour (default 20): past that, `429`.
 
 ```json
 202 Accepted
@@ -171,7 +199,7 @@ curl -X POST http://localhost:8000/jobs \
 ### 2. Follow its progress: `GET /jobs/{id}`
 
 ```bash
-curl http://localhost:8000/jobs/77ac7e6a-6d8a-4a91-9cc3-095efd71764e
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/jobs/77ac7e6a-6d8a-4a91-9cc3-095efd71764e
 ```
 
 `status` goes `queued` → `running` → `done` (or `failed`, with the reason in `error`). The
@@ -195,7 +223,7 @@ counters grow while the job runs, so you can poll every few seconds.
 ### 3. Download the report: `GET /jobs/{id}/report`
 
 ```bash
-curl -OJ http://localhost:8000/jobs/77ac7e6a-6d8a-4a91-9cc3-095efd71764e/report
+curl -OJ -H "Authorization: Bearer $TOKEN" http://localhost:8000/jobs/77ac7e6a-6d8a-4a91-9cc3-095efd71764e/report
 # saved as test-report-saucedemo.com-2026-10-13.xlsx
 ```
 
@@ -204,18 +232,20 @@ curl -OJ http://localhost:8000/jobs/77ac7e6a-6d8a-4a91-9cc3-095efd71764e/report
 | `done` | `200` with the `.xlsx` file |
 | `queued` / `running` | `409` + `Retry-After` header: not ready yet, try again later |
 | `failed` | `409` with the reason |
-| unknown id | `404` |
+| unknown id, or another user's job | `404` |
+| no / invalid token | `401` |
 
 ### Other endpoints
 
 | Endpoint | What it returns |
 |---|---|
-| `GET /jobs` | Jobs, newest first (paginated with `limit` / `offset`) |
+| `POST /auth/register`, `POST /auth/login`, `GET /auth/me` | Accounts: `{email, password}` in, a token out |
+| `GET /jobs` | Your jobs, newest first (paginated with `limit` / `offset`) |
 | `GET /jobs/{id}/pages` | The crawled pages, with their type and element inventory |
 | `GET /jobs/{id}/scenarios` | The scenarios (`SC-001`…), with steps and expected result |
 | `GET /jobs/{id}/usage` | LLM calls, tokens and estimated cost of the job |
 | `DELETE /jobs/{id}` | Deletes the job, its pages and scenarios |
-| `GET /Health` | Health check |
+| `GET /Health` | Health check (public) |
 
 Every endpoint is documented and can be tried from **http://localhost:8000/docs**.
 
@@ -231,6 +261,19 @@ Each decision is a short ADR (context → decision → consequence) in [docs/adr
 | [04](docs/adr/ADR-04-heuristic-page-classification.md) | **Page types (login, product, checkout…) by heuristic rules** | The signals are already in the inventory. Rules cost nothing, are instant and are unit-tested; every misclassified real page becomes a test. |
 | [05](docs/adr/ADR-05-langgraph-and-official-sdk.md) | **LangGraph for the pipeline, the official Anthropic SDK with structured outputs** | An explicit graph with `fail` edges, testable node by node. The JSON schema guarantees the shape of the output, and a single self-healing retry fixes what the schema cannot check. |
 | [06](docs/adr/ADR-06-llm-cost-ledger.md) | **One `llm_calls` row per billed call** | Retries, refusals and fallbacks are billed too. With a ledger, the cost of a job is a `SUM`, and the price of the SaaS can be based on real numbers. |
+| [07](docs/adr/ADR-07-jwt-auth-and-job-ownership.md) | **Email + password accounts, JWT tokens, jobs owned per user** | Every job costs money, so the API cannot be open. Stateless tokens keep the API horizontal; an hourly job limit caps the damage of a leaked token. |
+
+## Deployment
+
+One VPS, the same compose plus a production overlay (Caddy for HTTPS, no published database
+ports, Redis password, SQL logs off):
+
+```bash
+docker compose --env-file .env -f app/docker-compose.yml -f app/docker-compose.prod.yml up -d --build
+```
+
+The full procedure (server, DNS, `.env` keys, backups, updates, checklist) is in
+[docs/deployment.md](docs/deployment.md).
 
 ## Tests
 
@@ -248,7 +291,7 @@ flow, from `POST /jobs` to the downloaded Excel file. Details in the
 ## Roadmap
 
 **Product**
-- **Dashboard**: a web UI to create jobs, watch their progress and browse the scenarios.
+- **Dashboard** (done, `frontend/`): next, scenario editing, re-running a job and sharing a report by link.
 - **Testing RAG**: a knowledge base of testing practices and of earlier scenarios, retrieved by
   page type, so the Designer writes better and more consistent scenarios.
 - **MCP server**: expose "test this site" as tools, so Claude, an IDE or another agent can start a
@@ -259,12 +302,14 @@ flow, from `POST /jobs` to the downloaded Excel file. Details in the
 - Alembic migrations instead of `init_db` (WTA-4).
 - Automatic retries of failed jobs (WTA-8).
 - Close ADR-02 with the eval on real sites, and prompt v4 based on its results.
-- Authentication, multi-tenancy and per-customer usage limits.
+- Email verification and password reset; team accounts; per-plan usage limits.
 
 ## Documentation
 
 - [docs/guide.md](docs/guide.md): the full technical guide (data model, every command,
   configuration, the Excel report, languages, tracing, costs, debugging, conventions).
+- [docs/deployment.md](docs/deployment.md): running it on a server with HTTPS.
+- [frontend/README.md](frontend/README.md): the dashboard's structure and commands.
 - [docs/adr/](docs/adr/): the design decisions.
 - [CLAUDE.md](CLAUDE.md): architecture notes and conventions for AI-assisted development.
 - Work plan (Notion, in Spanish):
