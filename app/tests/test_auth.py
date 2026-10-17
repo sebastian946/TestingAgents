@@ -113,7 +113,9 @@ def test_a_tampered_or_expired_token_is_rejected(client):
     user_id = sign_in(client)
     assert client.get("/auth/me").status_code == 200
 
-    expired = auth.create_access_token(user_id, expires_minutes=-1)
+    with client.factory() as db:
+        user = db_crud.get_user(db, user_id)
+    expired = auth.create_access_token(user, expires_minutes=-1)
     assert client.get("/auth/me", headers={"Authorization": f"Bearer {expired}"}).status_code == 401
 
     forged = jwt.encode({"sub": str(user_id), "exp": datetime.now(timezone.utc) + timedelta(hours=1)},

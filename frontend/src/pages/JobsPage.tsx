@@ -39,7 +39,7 @@ export function JobsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Jobs</h1>
-        <Link to="/jobs/new" className="btn-primary">
+        <Link to="/new" className="btn-primary">
           New job
         </Link>
       </div>
@@ -51,7 +51,7 @@ export function JobsPage() {
         <div className="card p-10 text-center">
           <p className="font-medium">No jobs yet</p>
           <p className="mt-1 text-sm text-slate-500">Give it a URL and the agents will explore the site and design test scenarios for every page.</p>
-          <Link to="/jobs/new" className="btn-primary mt-4">
+          <Link to="/new" className="btn-primary mt-4">
             Create your first job
           </Link>
         </div>
@@ -75,7 +75,7 @@ export function JobsPage() {
               {jobs.map((job) => (
                 <tr key={job.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                   <td className="px-4 py-2">
-                    <Link to={`/jobs/${job.id}`} className="font-medium text-indigo-600 hover:underline">
+                    <Link to={`/job/${job.id}`} className="font-medium text-indigo-600 hover:underline">
                       {hostOf(job.url)}
                     </Link>
                     <p className="max-w-xs truncate text-xs text-slate-500" title={job.url}>

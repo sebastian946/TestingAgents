@@ -244,12 +244,24 @@ def stack(services, tmp_path_factory):
                                {"email": "integration@example.com", "password": "integration-test"}, auth=False)
         assert status == 201, f"POST /auth/register -> {status}: {body!r}"
         AUTH_HEADERS["Authorization"] = f"Bearer {json.loads(body)['access_token']}"
+        # The console mail backend prints the verification email to the API log (WTA-28):
+        # take the token from there and verify, as a user would from their inbox
+        token = wait_until(lambda: _last_token(run_dir / "api.log"), SERVICE_TIMEOUT, "the verification email")
+        status, _, body = http("POST", f"{base}/auth/verify", {"token": token}, auth=False)
+        assert status == 200 and json.loads(body)["email_verified"] is True, body
         yield {"api": base, "run_dir": run_dir}
     finally:
         for process in (api, worker):
             kill_tree(process)
         for handle in logs.values():
             handle.close()
+
+
+def _last_token(log: Path) -> str | None:
+    import re
+
+    found = re.findall(r"token=([A-Za-z0-9_\-]+)", log.read_text(encoding="utf-8", errors="replace"))
+    return found[-1] if found else None
 
 
 def _diagnostics(run_dir: Path) -> str:

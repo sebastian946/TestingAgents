@@ -13,7 +13,8 @@ npm run lint       # oxlint
 ```
 
 In development Vite proxies `/auth`, `/jobs` and `/Health` to the API (`vite.config.ts`),
-so the browser sees one origin and no CORS setup is needed. In production the `Dockerfile`
+so the browser sees one origin and no CORS setup is needed. Because those prefixes are forwarded, SPA routes
+never start with `/jobs`, `/auth`, `/Health` or `/docs` (they are `/new`, `/job/:id`, ...). In production the `Dockerfile`
 builds the bundle into a Caddy image that serves it and proxies the same paths
 (`app/deploy/Caddyfile`); `docker-compose.prod.yml` uses that image.
 

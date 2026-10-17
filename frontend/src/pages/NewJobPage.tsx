@@ -18,7 +18,7 @@ export function NewJobPage() {
     setBusy(true)
     try {
       const job = await api.createJob({ url: url.trim(), description: description.trim() || undefined, language })
-      navigate(`/jobs/${job.id}`)
+      navigate(`/job/${job.id}`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create the job.')
     } finally {

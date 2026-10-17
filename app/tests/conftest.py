@@ -17,6 +17,7 @@ FAKE_ANTHROPIC_KEY = "sk-ant-test-not-a-real-key"
 # Port 9 ("discard") on localhost: nothing listens, so a request fails at once
 DEAD_ANTHROPIC_URL = "http://127.0.0.1:9"
 
+import contextlib  # noqa: E402
 import itertools  # noqa: E402
 
 import pytest  # noqa: E402
@@ -182,10 +183,37 @@ def sign_in(client, email: str = "tester@example.com", password: str = "correct-
     """
     import uuid
 
-    response = client.post("/auth/register", json={"email": email, "password": password})
+    with captured_emails() as outbox:
+        response = client.post("/auth/register", json={"email": email, "password": password})
     assert response.status_code == 201, response.text
     client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"
+    # Creating jobs needs a verified email (WTA-28): click the link from the captured email
+    verified = client.post("/auth/verify", json={"token": token_in(outbox[-1])})
+    assert verified.status_code == 200, verified.text
     return uuid.UUID(response.json()["user"]["id"])
+
+
+@contextlib.contextmanager
+def captured_emails():
+    """Replace the mailer for a block and collect what would have been sent."""
+    from services import mailer
+
+    outbox: list = []
+    original = mailer.send_email
+    mailer.send_email = outbox.append
+    try:
+        yield outbox
+    finally:
+        mailer.send_email = original
+
+
+def token_in(email) -> str:
+    """The token of the link inside an email produced by services.mailer."""
+    import re
+
+    match = re.search(r"token=([A-Za-z0-9_\-]+)", email.text)
+    assert match, email.text
+    return match.group(1)
 
 
 @pytest.fixture
