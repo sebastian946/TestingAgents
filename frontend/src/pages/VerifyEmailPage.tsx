@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
-import { api, ApiError } from '../api'
+import { api, ApiError, getToken } from '../api'
 import { useAuth } from '../auth'
 
 /** /verify?token=…: the link from the verification email. Works logged in or not. */
@@ -22,7 +22,9 @@ export function VerifyEmailPage() {
     api
       .verifyEmail(token)
       .then(async () => {
-        if (user) await refresh()
+        // The page may have been opened fresh from the email: `user` is not loaded yet, but a
+        // stored token means a session exists and its email_verified flag is now stale
+        if (getToken()) await refresh().catch(() => undefined)
         if (!cancelled) setState('ok')
       })
       .catch((err) => {
