@@ -6,8 +6,8 @@
 #   - No database, Redis or API port is published on the host: only Caddy listens (80/443),
 #     and the services talk over the compose network. Published ports bypass ufw.
 #   - Redis requires a password (REDIS_PASSWORD): anyone who could reach it could enqueue jobs.
-#   - Caddy terminates HTTPS with an automatic Let's Encrypt certificate for DOMAIN and
-#     proxies the API; the frontend (its own branch) is served by the same Caddy.
+#   - Caddy terminates HTTPS with an automatic Let's Encrypt certificate for DOMAIN, serves
+#     the frontend (built into its image) and proxies the API paths.
 #   - SQL echo off: every statement, LLM text included, would otherwise go to the logs.
 services:
   postgres:
@@ -33,7 +33,10 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
 
   caddy:
-    image: caddy:2-alpine
+    # Caddy with the frontend build inside (frontend/Dockerfile): one container serves the
+    # dashboard and proxies the API
+    build:
+      context: ../frontend
     container_name: caddy
     restart: unless-stopped
     ports:

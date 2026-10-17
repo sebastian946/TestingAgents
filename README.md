@@ -10,7 +10,8 @@ real browser, Claude designs test scenarios for every page, and you get an Excel
 *A real report: saucedemo.com, 8 scenarios, about 20 seconds and US$0.04 of LLM spend.*
 
 **Stack:** FastAPI · PostgreSQL 16 · Redis 7 + RQ · Playwright (Chromium) · LangGraph ·
-Claude (official `anthropic` SDK, structured outputs) · openpyxl · LangSmith (optional) · uv · pytest
+Claude (official `anthropic` SDK, structured outputs) · openpyxl · LangSmith (optional) · uv · pytest ·
+React + Vite + TypeScript + Tailwind (dashboard)
 
 ## Architecture
 
@@ -115,6 +116,18 @@ docker compose --env-file .env -f app/docker-compose.yml down
 ```
 
 Without an API key the API and the crawl still work, but every job fails in the designer step.
+
+### The dashboard
+
+The web UI (`frontend/`) is a React single-page app: sign up, create jobs, watch them run,
+browse the scenarios and download the report. In production it is built into the Caddy
+image and served at `https://DOMAIN/` next to the API. For development:
+
+```bash
+cd frontend
+npm install
+npm run dev     # http://localhost:5173 (the API must be running on :8000)
+```
 
 <details>
 <summary><b>Running without Docker for the API and the worker (development)</b></summary>
@@ -278,7 +291,7 @@ flow, from `POST /jobs` to the downloaded Excel file. Details in the
 ## Roadmap
 
 **Product**
-- **Dashboard**: a web UI to create jobs, watch their progress and browse the scenarios.
+- **Dashboard** (done, `frontend/`): next, scenario editing, re-running a job and sharing a report by link.
 - **Testing RAG**: a knowledge base of testing practices and of earlier scenarios, retrieved by
   page type, so the Designer writes better and more consistent scenarios.
 - **MCP server**: expose "test this site" as tools, so Claude, an IDE or another agent can start a
@@ -296,6 +309,7 @@ flow, from `POST /jobs` to the downloaded Excel file. Details in the
 - [docs/guide.md](docs/guide.md): the full technical guide (data model, every command,
   configuration, the Excel report, languages, tracing, costs, debugging, conventions).
 - [docs/deployment.md](docs/deployment.md): running it on a server with HTTPS.
+- [frontend/README.md](frontend/README.md): the dashboard's structure and commands.
 - [docs/adr/](docs/adr/): the design decisions.
 - [CLAUDE.md](CLAUDE.md): architecture notes and conventions for AI-assisted development.
 - Work plan (Notion, in Spanish):
