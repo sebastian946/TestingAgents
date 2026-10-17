@@ -19,6 +19,8 @@ from redis.exceptions import RedisError  # noqa: E402
 from rq import SimpleWorker, Worker  # noqa: E402
 
 from config.variables import settings  # noqa: E402
+from db import db_crud  # noqa: E402
+from db.conn import local_session  # noqa: E402
 from db.redis.redis_conn import job_queue, redis_client  # noqa: E402
 
 
@@ -41,6 +43,11 @@ def main() -> int:
     if settings.designer_mode == "fake":
         print("WARNING: DESIGNER_MODE=fake. Scenarios come from fixed rules, not from Claude. "
               "Use it only for tests.", file=sys.stderr)
+    # WTA-29: a worker that died mid-crawl never cleared that job's login credentials
+    with local_session() as db:
+        cleared = db_crud.clear_stale_credentials(db)
+    if cleared:
+        print(f"Cleared login credentials of {cleared} finished or stale job(s).")
     print(f"Listening on RQ queue {settings.rq_queue_name!r}")
     worker_class = Worker if hasattr(os, "fork") else SimpleWorker
     worker = worker_class([job_queue], connection=redis_client)

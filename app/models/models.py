@@ -64,6 +64,16 @@ class Token(BaseModel):
     user: UserRead
 
 
+class JobLogin(BaseModel):
+    """Credentials for a site whose content is behind a login (WTA-29). Used once, for this
+    job, then deleted. Use a TEST account on a TEST environment: the explorer browses as it."""
+
+    login_url: str | None = Field(None, max_length=2048, description="The login page; defaults to the job URL")
+    username: str = Field(..., min_length=1, max_length=320)
+    password: str = Field(..., min_length=1, max_length=256)
+    authorized: bool = Field(..., description="Must be true: you confirm you are allowed to test this site with this account")
+
+
 class JobCreate(BaseModel):
     # str rather than HttpUrl: security.ssrf does the validation so we can return 400 (not 422)
     url: str = Field(..., max_length=2048, description="The url for the test execution")
@@ -71,6 +81,7 @@ class JobCreate(BaseModel):
     language: Language = Field(
         DEFAULT_LANGUAGE, description="Language of the scenarios and the report: 'en' (English) or 'es' (Spanish)"
     )
+    login: JobLogin | None = Field(None, description="Optional: log in before exploring")
 
 
 class JobRead(BaseModel):
@@ -80,6 +91,7 @@ class JobRead(BaseModel):
     description: str | None = None
     language: Language = DEFAULT_LANGUAGE
     url: str
+    login_url: str | None = Field(None, description="Set when the job explored the site logged in (credentials are never returned)")
     status: JobStatus
     pages_crawled: int
     total_scenarios: int

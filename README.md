@@ -182,6 +182,9 @@ curl -X POST http://localhost:8000/jobs \
 
 `description` is optional but improves the scenarios a lot: tell the agent what the app does.
 `language` is `en` (default) or `es`, and sets the language of the scenarios and the report.
+For a site whose content is behind a login, add `"login": {"login_url": "...", "username": "...", "password": "...", "authorized": true}`:
+the explorer signs in first (use a **test account** on a **test environment**); the credentials are encrypted,
+used for this job only and deleted when the exploration ends. The response only echoes `login_url`.
 Each account may create `AUTH_MAX_JOBS_PER_HOUR` jobs per hour (default 20): past that, `429`.
 
 ```json
@@ -265,6 +268,7 @@ Each decision is a short ADR (context → decision → consequence) in [docs/adr
 | [05](docs/adr/ADR-05-langgraph-and-official-sdk.md) | **LangGraph for the pipeline, the official Anthropic SDK with structured outputs** | An explicit graph with `fail` edges, testable node by node. The JSON schema guarantees the shape of the output, and a single self-healing retry fixes what the schema cannot check. |
 | [06](docs/adr/ADR-06-llm-cost-ledger.md) | **One `llm_calls` row per billed call** | Retries, refusals and fallbacks are billed too. With a ledger, the cost of a job is a `SUM`, and the price of the SaaS can be based on real numbers. |
 | [07](docs/adr/ADR-07-jwt-auth-and-job-ownership.md) | **Email + password accounts, JWT tokens, jobs owned per user** | Every job costs money, so the API cannot be open. Stateless tokens keep the API horizontal; an hourly job limit caps the damage of a leaked token. |
+| [08](docs/adr/ADR-08-authenticated-crawls.md) | **Sites behind a login: credentials per job, encrypted, deleted after the crawl** | Most products live behind a login. The secret lives minutes, never reaches the state, the logs or the LLM; the crawler skips action links while logged in; the customer uses a test account and confirms authorization. |
 
 ## Deployment
 

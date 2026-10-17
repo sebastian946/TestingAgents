@@ -43,6 +43,7 @@ from protego import Protego
 
 from agents.page_classifier import classify_page
 from agents.page_info import EXTRACT_JS, PageInfo
+from security.credentials import LoginSpec
 from security.ssrf import UnsafeURLError, validate_public_url
 
 USER_AGENT = "WebTestAgent/0.1"
@@ -50,6 +51,14 @@ DEFAULT_MAX_PAGES = 8
 DEFAULT_TIMEOUT = 15  # seconds, per page
 SKIPPED_SCHEMES = {"mailto", "tel", "javascript", "data"}
 BLOCKED_RESOURCE_TYPES = {"image", "media", "font"}  # not needed to read the DOM
+# When the crawler is logged in it acts as a real user, so links whose path suggests a
+# state change are never followed (WTA-29). A GET to /account/delete is harmless for an
+# anonymous visitor and real for a logged-in one on a badly built site.
+UNSAFE_LINK_WORDS = frozenset({
+    "logout", "signout", "delete", "remove", "destroy", "cancel", "unsubscribe", "deactivate",
+    "checkout", "pay", "payment", "purchase", "buy", "order", "confirm", "submit", "approve", "reject",
+    "transfer", "withdraw", "send", "archive", "reset", "revoke", "disable",
+})
 
 
 @dataclass
@@ -66,6 +75,23 @@ class CrawledPage:
 
 # Called after each page is fetched; the worker uses it to persist the page immediately
 PageCallback = Callable[[CrawledPage], None]
+
+
+@dataclass
+class LoginResult:
+    """Outcome of `PlaywrightFetcher.login`. `message` is safe to store in job.error."""
+
+    ok: bool
+    message: str
+
+
+def _looks_unsafe(url: str) -> bool:
+    """True when a path segment or word of the URL is an action word (see UNSAFE_LINK_WORDS).
+
+    "log-out" and "sign_out" count too: separators are dropped before matching."""
+    words = re.split(r"[^a-z]+", urlsplit(url).path.lower())
+    joined = {w for w in words if w} | {a + b for a, b in zip(words, words[1:])}
+    return bool(joined & UNSAFE_LINK_WORDS)
 
 
 @dataclass
@@ -239,6 +265,59 @@ class PlaywrightFetcher:
         finally:
             page.close()
 
+    def login(self, spec: LoginSpec, timeout: int) -> LoginResult:
+        """Sign in once; the session cookies then apply to every page of the crawl.
+
+        Deterministic, no LLM (ADR-01): the login form is the one with a visible password
+        field; the username field is the visible text/email input before it; submit is the
+        form's submit button, or Enter. Success = no password field is visible afterwards.
+        Any failure is reported, never raised:
+        the crawl then continues as an anonymous visitor and the job says so.
+        """
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        assert self._context is not None, "use PlaywrightFetcher inside a `with` block"
+        page = self._context.new_page()
+        try:
+            page.goto(spec.login_url, timeout=timeout * 1000, wait_until="domcontentloaded")
+            try:
+                page.wait_for_load_state("networkidle", timeout=3000)
+            except PlaywrightTimeoutError:
+                pass
+            password = page.locator("input[type=password]:visible").first
+            if password.count() == 0:
+                return LoginResult(False, f"No password field found on {spec.login_url}.")
+            username = password.locator(
+                "xpath=preceding::input[not(@type) or @type='text' or @type='email' or @type='tel'][1]"
+            )
+            if username.count() == 0:
+                return LoginResult(False, f"No username field found before the password field on {spec.login_url}.")
+            username.fill(spec.username)
+            password.fill(spec.password)
+            submit = password.locator("xpath=ancestor::form[1]//*[(self::button or self::input) and @type='submit']").first
+            if submit.count() == 0:
+                submit = password.locator("xpath=ancestor::form[1]//button[not(@type) or @type='button']").first
+            if submit.count() > 0:
+                submit.click(timeout=5000)
+            else:
+                password.press("Enter")
+            try:
+                page.wait_for_load_state("networkidle", timeout=timeout * 1000)
+            except PlaywrightTimeoutError:
+                pass
+            # A visible password field after submitting means the form came back, whatever
+            # the URL: many sites POST elsewhere and re-render the login page on failure
+            if page.locator("input[type=password]:visible").count() > 0:
+                return LoginResult(False, "Login failed: the login form is still shown (wrong credentials?).")
+            return LoginResult(True, f"Logged in as {spec.username} at {spec.login_url}.")
+        except PlaywrightTimeoutError:
+            return LoginResult(False, f"Login failed: {spec.login_url} timed out after {timeout}s.")
+        except PlaywrightError as exc:
+            return LoginResult(False, f"Login failed: {exc.__class__.__name__}: {str(exc).splitlines()[0]}")
+        finally:
+            page.close()
+
     def _screenshot(self, page) -> str | None:
         """Save a full-page PNG; a failure here must never fail the page itself."""
         from playwright.sync_api import Error as PlaywrightError
@@ -263,6 +342,8 @@ def crawl(
     on_page: PageCallback | None = None,
     use_browser: bool = False,
     screenshot_dir: str | Path | None = None,
+    login: LoginSpec | None = None,
+    on_login: Callable[[LoginResult], None] | None = None,
 ) -> list[CrawledPage]:
     """Breadth-first crawl of `start_url` limited to its domain and to `max_pages` pages.
 
@@ -271,6 +352,9 @@ def crawl(
     With `use_browser=True` pages are rendered in Chromium and `CrawledPage.elements`
     holds the PageInfo inventory (forms, buttons, navigation); `screenshot_dir` (browser
     mode only) additionally saves a full-page PNG per page into that folder.
+    With `login` (browser mode only, WTA-29) the crawler signs in first and reports the
+    outcome through `on_login`; while logged in, links that look like actions (logout,
+    delete, checkout...) are not followed. A failed login still crawls, anonymously.
     """
     start = normalize_url(start_url)
     if start is None:
@@ -283,7 +367,14 @@ def crawl(
     if use_browser:
         shots = Path(screenshot_dir) if screenshot_dir else None
         with PlaywrightFetcher(screenshot_dir=shots) as fetcher:
-            return _bfs(start, fetcher, robots, max_pages, timeout, on_page)
+            logged_in = False
+            if login is not None:
+                outcome = fetcher.login(login, timeout)
+                print(f"[explorer] {outcome.message}")
+                if on_login is not None:
+                    on_login(outcome)
+                logged_in = outcome.ok
+            return _bfs(start, fetcher, robots, max_pages, timeout, on_page, skip_unsafe=logged_in)
     return _bfs(start, RequestsFetcher(session), robots, max_pages, timeout, on_page)
 
 
@@ -294,6 +385,7 @@ def _bfs(
     max_pages: int,
     timeout: int,
     on_page: PageCallback | None,
+    skip_unsafe: bool = False,
 ) -> list[CrawledPage]:
     site = _site_key(start)
     queue: deque[tuple[str, int]] = deque([(start, 0)])
@@ -344,6 +436,10 @@ def _bfs(
         for href in result.links:
             link = normalize_url(href)
             if link is None or link in seen or _site_key(link) != site:
+                continue
+            if skip_unsafe and _looks_unsafe(link):
+                print(f"[explorer] logged in, not following action-like link: {link}")
+                seen.add(link)
                 continue
             seen.add(link)
             queue.append((link, depth + 1))
