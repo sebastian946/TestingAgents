@@ -191,11 +191,12 @@ def services():
     wait_until(lambda: Redis(host=settings.redis_host, port=settings.redis_port, socket_timeout=2).ping(),
                SERVICE_TIMEOUT, "Redis")
 
-    # A database of its own: the test never touches your development data
+    # A database of its own, recreated every run: the test never touches your development
+    # data, and a schema change since the last run (init_db adds tables, never columns)
+    # cannot leave it stale. FORCE closes connections a crashed previous run left behind
     with psycopg.connect(admin_dsn, autocommit=True) as conn:
-        exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (IT_DB_NAME,)).fetchone()
-        if not exists:
-            conn.execute(f'CREATE DATABASE "{IT_DB_NAME}"')
+        conn.execute(f'DROP DATABASE IF EXISTS "{IT_DB_NAME}" WITH (FORCE)')
+        conn.execute(f'CREATE DATABASE "{IT_DB_NAME}"')
     return settings
 
 
@@ -348,7 +349,7 @@ def test_an_internal_url_is_still_rejected_by_the_api(stack):
 def test_the_api_refuses_anonymous_and_foreign_requests(stack, site_url):
     """Without a token nothing under /jobs answers; with another account's token a job is a 404."""
     status, headers, _ = http("GET", f"{stack['api']}/jobs", auth=False)
-    assert status == 401 and headers.get("WWW-Authenticate") == "Bearer"
+    assert status == 401 and {k.lower(): v for k, v in headers.items()}.get("www-authenticate") == "Bearer"
     status, _, _ = http("POST", f"{stack['api']}/jobs", {"url": f"{site_url}/"}, auth=False)
     assert status == 401
 
