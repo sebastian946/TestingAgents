@@ -37,9 +37,9 @@ services:
       target: api
     container_name: api
     restart: unless-stopped
-    # Create the tables that do not exist yet, then serve. init_db is safe to repeat: it only
-    # creates missing tables, so a fresh clone works with no manual step
-    command: sh -c "python -m db.init_db && uvicorn main:app --host 0.0.0.0 --port 8000"
+    # Apply pending migrations, then serve (WTA-4). A fresh database gets every migration, an
+    # existing one only what is new, so a fresh clone and an upgrade both work with no manual step
+    command: sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
     volumes:

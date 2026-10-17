@@ -44,16 +44,16 @@ Both answer with the same token shape, so a client that just signed up is logged
   or a client loop can cost.
 - **Login never says which field was wrong**, and the password check runs even when the
   email is unknown, so neither the message nor the timing reveals which emails exist.
-- No email verification and no password reset yet. Both need an email provider, and
-  neither blocks the first customers; they are on the roadmap.
+- Email verification and password reset came with WTA-28: single-use hashed tokens sent by
+  email (`services/mailer.py`), `POST /jobs` closed until the address is verified, and a
+  `token_version` in the JWT so a reset logs out every session.
 
 ## Consequences
 
 - The API stays stateless: scaling it is still "run another container" (ADR-03).
-- Rotating `AUTH_SECRET_KEY` logs every user out at once; there is no per-token revocation.
-  If that is ever needed, a `token_version` column on `users` checked by `get_current_user`
-  gives per-user revocation with one cheap lookup.
+- Rotating `AUTH_SECRET_KEY` logs every user out at once. Per-user revocation exists through
+  `users.token_version` (bumped by a password reset); per-token revocation does not.
 - Jobs created before this change have `user_id = NULL` and are invisible through the API;
-  existing databases need one `ALTER TABLE` (documented in the guide, until Alembic, WTA-4).
+  migration `0002` adds the column to existing databases.
 - The frontend keeps the token in the browser and sends it as a bearer header. CORS must
   then name the frontend's origin (`CORS_ORIGINS`) instead of `*`.

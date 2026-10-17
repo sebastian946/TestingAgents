@@ -72,6 +72,8 @@ Set in `.env`:
 | `REDIS_PASSWORD` | `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `DOMAIN` | the hostname from step 2 |
 | `CORS_ORIGINS` | not needed when the dashboard is served by Caddy (same origin). Only for a frontend hosted elsewhere: its exact origin, e.g. `["https://app.example.com"]` |
+| `EMAIL_BACKEND=resend`, `RESEND_API_KEY`, `EMAIL_FROM` | verification and reset emails. Create a free account at resend.com, add your domain (two DNS records they show you), create an API key, and use a sender on that domain, e.g. `Testing Agents <no-reply@example.com>`. With `console` nobody receives the links |
+| `APP_URL` | `https://app.example.com`: the links in emails point here |
 | `LANGSMITH_*` | optional; tracing a production job stores its pages and scenarios in LangSmith |
 
 `.env` is git-ignored: it never leaves the server except in your own backups.
@@ -113,9 +115,9 @@ This rebuilds and restarts the API and the worker. Restarting the worker matters
 worker keeps the code it started with. A job that was running is marked `failed` by RQ;
 the client can submit it again.
 
-Schema changes: `init_db` creates missing tables but never alters existing ones. Until
-Alembic lands (WTA-4), a release that changes a table ships the `ALTER TABLE` in its notes;
-run it with `docker exec -it postgres_db psql -U $DB_USER -d $DB_NAME`.
+Schema changes are applied by the api container itself: it runs `alembic upgrade head`
+before serving, so a release that adds a migration needs nothing manual. To see the state:
+`docker compose ... exec api alembic current`.
 
 ### 7. Backups
 
@@ -153,6 +155,7 @@ Restore: `gunzip -c db-2026-10-16-0300.sql.gz | docker exec -i postgres_db psql 
 - [ ] `AUTH_SECRET_KEY`, `REDIS_PASSWORD`, `DB_PASSWORD` are long random values (the API logs
       a warning at start when the auth key is short or the placeholder).
 - [ ] `ANTHROPIC_API_KEY` has a spend limit.
+- [ ] `EMAIL_BACKEND=resend` with the domain verified: register a test account and click the link you receive.
 - [ ] `ufw` is on, and `docker compose ... ps` shows only Caddy with published ports.
 - [ ] `https://DOMAIN/Health` answers over HTTPS; `http://` redirects.
 - [ ] The backup cron ran at least once and the dump is readable.

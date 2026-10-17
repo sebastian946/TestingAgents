@@ -5,11 +5,14 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider, RequireAuth } from './auth'
 import { Layout } from './components/Layout'
 import './index.css'
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage'
 import { JobDetailPage } from './pages/JobDetailPage'
 import { JobsPage } from './pages/JobsPage'
 import { LoginPage } from './pages/LoginPage'
 import { NewJobPage } from './pages/NewJobPage'
 import { RegisterPage } from './pages/RegisterPage'
+import { ResetPasswordPage } from './pages/ResetPasswordPage'
+import { VerifyEmailPage } from './pages/VerifyEmailPage'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -18,6 +21,9 @@ createRoot(document.getElementById('root')!).render(
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/verify" element={<VerifyEmailPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route
             element={
               <RequireAuth>
@@ -26,8 +32,8 @@ createRoot(document.getElementById('root')!).render(
             }
           >
             <Route path="/" element={<JobsPage />} />
-            <Route path="/jobs/new" element={<NewJobPage />} />
-            <Route path="/jobs/:id" element={<JobDetailPage />} />
+            <Route path="/new" element={<NewJobPage />} />
+            <Route path="/job/:id" element={<JobDetailPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

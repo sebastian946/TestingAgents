@@ -14,6 +14,9 @@ interface AuthState {
   loading: boolean
   login: (email: string, password: string) => Promise<void>
   register: (email: string, password: string) => Promise<void>
+  resetPassword: (token: string, password: string) => Promise<void>
+  /** Re-read the account (after verifying the email) */
+  refresh: () => Promise<void>
   logout: () => void
 }
 
@@ -67,6 +70,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const token = await api.register(email, password)
         setToken(token.access_token)
         setUser(token.user)
+      },
+      async resetPassword(token, password) {
+        const result = await api.resetPassword(token, password)
+        setToken(result.access_token)
+        setUser(result.user)
+      },
+      async refresh() {
+        setUser(await api.me())
       },
       logout,
     }),
