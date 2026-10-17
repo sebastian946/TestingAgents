@@ -1,6 +1,7 @@
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 
 import { useAuth } from '../auth'
+import { VerifyBanner } from './VerifyBanner'
 
 export function Layout() {
   const { user, logout } = useAuth()
@@ -18,7 +19,7 @@ export function Layout() {
             <NavLink to="/" end className={({ isActive }) => (isActive ? 'font-medium text-indigo-600' : 'text-slate-600 dark:text-slate-300')}>
               Jobs
             </NavLink>
-            <NavLink to="/jobs/new" className="btn-primary px-3 py-1.5">
+            <NavLink to="/new" className="btn-primary px-3 py-1.5">
               New job
             </NavLink>
             <span className="hidden text-slate-500 sm:inline" title={user?.email}>
@@ -37,6 +38,7 @@ export function Layout() {
           </nav>
         </div>
       </header>
+      <VerifyBanner />
       <main className="mx-auto max-w-6xl px-4 py-6">
         <Outlet />
       </main>

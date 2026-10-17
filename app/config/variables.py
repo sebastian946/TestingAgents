@@ -42,6 +42,17 @@ class Settings(BaseSettings):
     auth_token_expire_minutes: int = 60 * 24  # one day
     # Jobs a user may create per rolling hour: each one costs real LLM money (ADR-06)
     auth_max_jobs_per_hour: int = 20
+    # Lifetimes of the links sent by email (WTA-28)
+    auth_verify_token_hours: int = 48
+    auth_reset_token_minutes: int = 60
+
+    # Email (WTA-28): verification links and password resets. "console" prints the message
+    # to the API log (development, tests); "resend" sends it through https://resend.com
+    email_backend: Literal["console", "resend"] = "console"
+    resend_api_key: str | None = None
+    email_from: str = "Testing Agents <onboarding@resend.dev>"
+    # Public URL of the dashboard, where the links in emails point to (no trailing slash)
+    app_url: str = "http://localhost:5173"
 
     # Designer agent (WTA-15). Optional so the API, the crawl and the tests run without a key;
     # the Designer raises a clear error if it is called without one.

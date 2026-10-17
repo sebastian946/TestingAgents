@@ -13,7 +13,7 @@ from db.conn import get_db
 from db.models_db.models_db import Job, JobStatus, User
 from db.redis.redis_conn import add_new_job_to_queue
 from models.models import JobCreate, JobRead, JobUsage, PageRead, ScenarioRead
-from security.auth import get_current_user
+from security.auth import get_current_user, require_verified_email
 from security.ssrf import UnsafeURLError, validate_public_url
 
 # Every route needs a logged-in user (WTA-26): the dependency runs before the handler and
@@ -35,11 +35,12 @@ def owned_job(job_id: uuid.UUID, user: User = Depends(get_current_user), db: Ses
     response_model=JobRead,
     summary="Create a new job test execution",
 )
-def create_job(payload: JobCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_job(payload: JobCreate, user: User = Depends(require_verified_email), db: Session = Depends(get_db)):
     """Receive the URL, store the job as `queued` for the caller and respond 202.
 
     The test is NOT run here: the worker processes it; poll GET /jobs/{id}.
-    Responds 400 if the URL is not http/https or points to an internal network (anti-SSRF),
+    Responds 403 until the account's email is verified (WTA-28), 400 if the URL is not
+    http/https or points to an internal network (anti-SSRF),
     and 429 once the user has created `AUTH_MAX_JOBS_PER_HOUR` jobs in the last hour: each
     job spends real LLM money, so a leaked token or a loop cannot run up the bill.
     """

@@ -141,7 +141,7 @@ docker compose --env-file .env -f app/docker-compose.yml up -d postgres redis
 cd app                              # every Python command runs from app/
 uv sync                             # install dependencies into app/.venv
 uv run playwright install chromium  # once per machine
-uv run python -m db.init_db         # create the tables
+uv run alembic upgrade head         # create / migrate the tables
 uv run uvicorn main:app --reload    # terminal 1: API at http://127.0.0.1:8000/docs
 uv run python -m worker.worker      # terminal 2: the worker
 ```
@@ -165,7 +165,10 @@ export TOKEN=eyJ...
 ```
 
 `POST /auth/login` takes the same body and returns the same token; `GET /auth/me` says who
-the token belongs to. Tokens last `AUTH_TOKEN_EXPIRE_MINUTES` (default one day).
+the token belongs to. Tokens last `AUTH_TOKEN_EXPIRE_MINUTES` (default one day). Registering
+sends a verification email (`EMAIL_BACKEND`: printed to the API log in development, Resend in
+production); creating jobs needs the link clicked. `/auth/password/forgot` + `/auth/password/reset`
+handle forgotten passwords.
 
 The three endpoints of the main flow. The responses below are real, trimmed.
 
@@ -299,10 +302,9 @@ flow, from `POST /jobs` to the downloaded Excel file. Details in the
 - **CLI**: `testing-agents run https://...` for local use and CI pipelines.
 
 **Engine**
-- Alembic migrations instead of `init_db` (WTA-4).
 - Automatic retries of failed jobs (WTA-8).
 - Close ADR-02 with the eval on real sites, and prompt v4 based on its results.
-- Email verification and password reset; team accounts; per-plan usage limits.
+- Team accounts, per-plan usage limits and billing.
 
 ## Documentation
 

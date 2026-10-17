@@ -1,10 +1,12 @@
+import hashlib
+import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from db.models_db.models_db import Job, JobStatus, LlmCall, Page, Scenario, User
+from db.models_db.models_db import EmailToken, Job, JobStatus, LlmCall, Page, Scenario, User
 
 
 def _now() -> datetime:
@@ -29,6 +31,59 @@ def get_user(db: Session, user_id: uuid.UUID) -> User | None:
 
 def get_user_by_email(db: Session, email: str) -> User | None:
     return db.scalars(select(User).where(User.email == email.strip().lower())).first()
+
+
+def mark_email_verified(db: Session, user: User) -> User:
+    if user.email_verified_at is None:
+        user.email_verified_at = _now()
+        db.commit()
+        db.refresh(user)
+    return user
+
+
+def set_password(db: Session, user: User, password_hash: str) -> User:
+    """New password, and every token issued so far stops working (token_version is in the JWT)."""
+    user.password_hash = password_hash
+    user.token_version = (user.token_version or 0) + 1
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+# ----------------------------------------------------- Email tokens (WTA-28)
+
+def _token_hash(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def create_email_token(db: Session, user_id: uuid.UUID, purpose: str, ttl: timedelta) -> str:
+    """Issue a one-time token for `purpose` (verify | reset) and return the raw value to put
+    in the link. Earlier unused tokens of the same purpose are spent, so only the latest
+    email works. Only the hash is stored."""
+    now = _now()
+    db.execute(
+        update(EmailToken)
+        .where(EmailToken.user_id == user_id, EmailToken.purpose == purpose, EmailToken.used_at.is_(None))
+        .values(used_at=now)
+    )
+    raw = secrets.token_urlsafe(32)
+    db.add(EmailToken(user_id=user_id, purpose=purpose, token_hash=_token_hash(raw), expires_at=now + ttl))
+    db.commit()
+    return raw
+
+
+def consume_email_token(db: Session, raw: str, purpose: str) -> User | None:
+    """Spend a token and return its user, or None if it is unknown, used, expired or for
+    another purpose. The commit is left to the caller, so the token and its effect
+    (verified email, new password) land together."""
+    token = db.scalars(select(EmailToken).where(EmailToken.token_hash == _token_hash(raw))).first()
+    if token is None or token.purpose != purpose or token.used_at is not None:
+        return None
+    expires_at = token.expires_at if token.expires_at.tzinfo else token.expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < _now():
+        return None
+    token.used_at = _now()
+    return db.get(User, token.user_id)
 
 
 def count_jobs_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:

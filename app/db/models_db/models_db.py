@@ -32,9 +32,36 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True)  # stored lower-case
     password_hash: Mapped[str] = mapped_column(String(255))  # argon2 (security/auth.py)
     is_active: Mapped[bool] = mapped_column(default=True, server_default="true")
+    # Set when the user clicks the link in the verification email (WTA-28). Unverified users
+    # can log in and look around but cannot create jobs: jobs cost money
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Carried in every JWT; bumping it (password reset) logs the user out everywhere
+    token_version: Mapped[int] = mapped_column(default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     jobs: Mapped[list["Job"]] = relationship(back_populates="user")
+    email_tokens: Mapped[list["EmailToken"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+class EmailToken(Base):
+    """A one-time token sent by email (WTA-28): verify the address, or reset the password.
+
+    Only the SHA-256 of the token is stored, so a database leak does not hand out working
+    links. A token is spent when `used_at` is set, and requesting a new one of the same
+    purpose invalidates the earlier ones.
+    """
+
+    __tablename__ = "email_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    purpose: Mapped[str] = mapped_column(String(20))  # verify | reset
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="email_tokens")
 
 
 class Job(Base):

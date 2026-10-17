@@ -14,7 +14,7 @@ The work plan lives in Notion:
 | A — Skeleton | Repository and folder structure | Done |
 | A — Skeleton | Postgres and Redis with docker-compose | Done |
 | A — Skeleton | FastAPI API: `POST /jobs` and `GET /jobs/{id}` | Done |
-| A — Skeleton | SQLAlchemy models + CRUD | Done (Alembic pending) |
+| A — Skeleton | SQLAlchemy models + CRUD + Alembic migrations | Done |
 | A — Skeleton | Anti-SSRF URL validation | Done |
 | B — Queue and Worker | Enqueue jobs with RQ, worker | Done |
 | B — Queue and Worker | Failure handling (failed state, retry) | Pending |
@@ -134,7 +134,9 @@ TestingAgents/
     │   ├── conn.py          # engine, session, Base, get_db dependency
     │   ├── models_db/models_db.py  # Job, Page, Scenario tables
     │   ├── db_crud.py       # database operations
-    │   └── init_db.py       # creates the tables (development shortcut)
+    │   └── init_db.py       # creates the tables and stamps alembic head (development shortcut)
+    ├── alembic/             # migrations (WTA-4): versions/0001..., env.py reads .env
+    ├── services/mailer.py   # verification / reset emails: console or Resend (WTA-28)
     ├── models/models.py     # Pydantic input/output schemas
     ├── routes/routes.py     # /jobs endpoints (every one needs a token)
     ├── routes/auth_routes.py # /auth/register, /auth/login, /auth/me (WTA-26)
@@ -174,6 +176,10 @@ copy .env.example .env
 | `AUTH_SECRET_KEY` | signs the login tokens (WTA-26). **Required by the API**; generate it with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Changing it logs everyone out | placeholder (the API warns) |
 | `AUTH_TOKEN_EXPIRE_MINUTES` | token lifetime | `1440` (one day) |
 | `AUTH_MAX_JOBS_PER_HOUR` | jobs one account may create per rolling hour; `429` past it | `20` |
+| `AUTH_VERIFY_TOKEN_HOURS`, `AUTH_RESET_TOKEN_MINUTES` | lifetime of the links sent by email | `48`, `60` |
+| `EMAIL_BACKEND` | `console` (print to the API log) or `resend` | `console` |
+| `RESEND_API_KEY`, `EMAIL_FROM` | Resend key and verified sender (`Name <no-reply@yourdomain.com>`) | unset |
+| `APP_URL` | public URL of the dashboard, used in the email links | `http://localhost:5173` |
 | `CORS_ORIGINS` | JSON list of browser origins allowed by CORS | `["*"]` |
 | `SQL_ECHO` | print every SQL statement to the console | `true` (production: `false`) |
 | `REDIS_PASSWORD`, `DOMAIN` | production only, see [deployment.md](deployment.md) | unset |
@@ -209,11 +215,27 @@ environment: `uv run <command>` uses it automatically.
 ### 4. Create the tables
 
 ```powershell
-uv run python -m db.init_db
+uv run alembic upgrade head
 ```
 
-Development shortcut that creates the tables from the models. Board task WTA-4 calls for
-replacing it with Alembic migrations (see "Next steps").
+Applies every migration in `app/alembic/versions/` that the database has not seen yet
+(WTA-4). Run it again after pulling code that adds a migration. `uv run python -m db.init_db`
+still works as a shortcut (creates the tables and stamps the latest revision), but
+`upgrade head` is the one that also alters existing tables.
+
+**Databases created before migrations existed** (with `init_db` only): tell Alembic where they
+are, once, then upgrade. A database from before accounts (WTA-26) is at `0001`; one with the
+`users` table and `job.user_id` is at `0002`:
+
+```powershell
+uv run alembic stamp 0002_users_and_job_owner   # or 0001_initial_schema
+uv run alembic upgrade head
+uv run alembic check                            # "No new upgrade operations detected" = in sync
+```
+
+Changing a model: `uv run alembic revision --autogenerate -m "short description"`, then read
+the generated file (autogenerate misses data migrations and some type changes), then
+`upgrade head`. Migration files are named `NNNN_slug.py` and are never edited once merged.
 
 ### 5. Run the API
 
@@ -249,7 +271,8 @@ docker compose --env-file .env -f app/docker-compose.yml logs -f worker         
 ```
 
 The services start in order through healthchecks: Postgres and Redis, then the api (which runs
-`python -m db.init_db` before uvicorn; it is idempotent), then the worker.
+`alembic upgrade head` before uvicorn, so a fresh database gets its tables and an existing one
+its pending changes), then the worker.
 
 For a real server (HTTPS, no published database ports, backups) see [deployment.md](deployment.md).
 
@@ -259,9 +282,7 @@ tests **outside** Docker, download the same browser once: `uv run playwright ins
 (from `app/`; the build must match the Playwright version in `uv.lock`, so rerun it after
 `uv sync` upgrades Playwright).
 
-If you created the tables before the `elements` column existed, add it without losing data:
-`docker exec -it postgres_db psql -U myuser -d local -c "ALTER TABLE pages ADD COLUMN elements JSONB;"`
-(Alembic will handle this once WTA-4 is done). Inside the Docker network the compose
+Inside the Docker network the compose
 file overrides `ENDPOINT=postgres`, `REDIS_HOST=redis` and `DB_PORT=5432`; your `.env` keeps
 the `localhost` values for running outside Docker.
 
@@ -309,15 +330,30 @@ Passwords are stored as argon2id hashes; tokens are HS256 JWTs signed with
 [ADR-07](adr/ADR-07-jwt-auth-and-job-ownership.md); the code is `security/auth.py` and
 `routes/auth_routes.py`; `tests/test_auth.py` covers it.
 
-Databases created before WTA-26 need the owner column once (`init_db` adds the new `users`
-table but never alters `job`):
+Databases created before WTA-26 get the `users` table and `job.user_id` from migration
+`0002` (see "Create the tables"). Jobs from before accounts existed keep `user_id = NULL` and
+are not visible through the API.
 
-```sql
-ALTER TABLE job ADD COLUMN user_id UUID REFERENCES users(id);
-CREATE INDEX ix_job_user_id ON job (user_id);
-```
+### Email verification and password reset (WTA-28)
 
-Jobs from before accounts existed keep `user_id = NULL` and are not visible through the API.
+| Method | Path | Response |
+|---|---|---|
+| `POST` | `/auth/verify/request` | (token) sends the verification email again; `202` |
+| `POST` | `/auth/verify` | body `{"token"}` from the link; `200` with the user, `400` if unknown, used or expired |
+| `POST` | `/auth/password/forgot` | body `{"email"}`; always `202` with the same message, mail only if the account exists |
+| `POST` | `/auth/password/reset` | body `{"token", "password"}`; `200` with a fresh token (logs in), `400` for a bad link |
+
+Registering sends a verification link (`APP_URL/verify?token=...`, valid `AUTH_VERIFY_TOKEN_HOURS`).
+An unverified account can log in and browse, but `POST /jobs` answers `403` until the link is
+clicked: jobs spend money. Reset links (`APP_URL/reset-password?token=...`) last
+`AUTH_RESET_TOKEN_MINUTES`; a reset bumps `users.token_version`, which every JWT carries, so
+all earlier sessions are logged out, and it also marks the email verified (whoever reads the
+mailbox owns the address). Tokens are stored hashed in `email_tokens` and are single-use;
+asking for a new one invalidates the previous. `services/mailer.py` sends through
+`EMAIL_BACKEND`: `console` (printed to the API log; take the token from there in development)
+or `resend`. Emails go out in FastAPI background tasks, so a provider outage is logged and the
+user can ask again instead of getting a 500. `tests/test_email.py` covers it; API tests get a
+verified account from `tests.conftest.sign_in`, which captures the email and clicks its link.
 
 ## Querying the scenarios (WTA-17)
 
@@ -424,11 +460,6 @@ sesión`). All report texts live in `agents/report_texts.py`. Adding a language 
 
 The prompt needs no change.
 
-Existing databases need the new column once (new ones get it from `init_db`):
-
-```powershell
-docker exec -it postgres_db psql -U myuser -d local -c "ALTER TABLE job ADD COLUMN IF NOT EXISTS language VARCHAR(5) NOT NULL DEFAULT 'en';"
-```
 
 ## Tracing with LangSmith
 
@@ -729,19 +760,9 @@ To improve a rule, add the failing page as a unit test first, then adjust the th
 
 ## Next steps (per the board)
 
-1. **Alembic** (closes WTA-4):
-   ```powershell
-   cd app
-   uv add alembic
-   uv run alembic init alembic
-   ```
-   In `alembic/env.py`: import `Base` and `DATABASE_URL` from `db.conn`, import
-   `db.models_db.models_db`, and set `target_metadata = Base.metadata`. Then
-   `uv run alembic revision --autogenerate -m "initial tables"` and
-   `uv run alembic upgrade head`. If you already created tables with `init_db`, drop them first.
-2. **RQ + worker** (WTA-6 to 8): `uv add rq`; the worker uses `mark_job_running`,
+1. **RQ + worker** (WTA-6 to 8): `uv add rq`; the worker uses `mark_job_running`,
    `mark_job_done` and `mark_job_failed` from `db_crud.py`.
-3. **Failure handling** (WTA-8): reprocessing a job is already safe (`mark_job_running`
+2. **Failure handling** (WTA-8): reprocessing a job is already safe (`mark_job_running`
    wipes the previous attempt's pages and counters), so RQ retries can be enabled.
 4. **Designer**: run the model comparison and close ADR-02 (`llm_calls` now gives the real
    cost of each candidate), then write prompt v3. The first real job on a login page produced 11
