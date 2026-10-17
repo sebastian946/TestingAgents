@@ -117,6 +117,7 @@ Deleting a job cascades to its pages and scenarios.
 ```
 TestingAgents/
 ├── .env                  # local variables (NOT versioned)
+├── frontend/             # React dashboard (Vite + TypeScript + Tailwind); see frontend/README.md
 ├── .env.example          # variables template
 ├── pyrightconfig.json    # points Pylance to the app/ venv
 ├── .vscode/settings.json # VS Code interpreter

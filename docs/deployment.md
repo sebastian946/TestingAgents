@@ -28,7 +28,7 @@ locally, and the worker's Chromium gets the memory it needs.
 |---|---|
 | Postgres, Redis and the API publish **no ports** on the host | A published port bypasses `ufw`; only Caddy listens on 80/443 |
 | Redis requires `REDIS_PASSWORD` | Anyone who can reach Redis can enqueue jobs |
-| **Caddy** in front: HTTPS with an automatic Let's Encrypt certificate for `DOMAIN` | No certificate chores; HSTS and security headers in `app/deploy/Caddyfile` |
+| **Caddy** in front: HTTPS with an automatic Let's Encrypt certificate for `DOMAIN`, the dashboard built into its image (`frontend/Dockerfile`), the API proxied under the same origin | No certificate chores, no CORS (one origin); HSTS and security headers in `app/deploy/Caddyfile` |
 | `SQL_ECHO=false` | SQL logs (LLM text included) would fill the disk |
 
 Authentication (`POST /auth/register`, `/auth/login`) is part of the API itself since WTA-26:
@@ -71,7 +71,7 @@ Set in `.env`:
 | `AUTH_SECRET_KEY` | `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` |
 | `REDIS_PASSWORD` | `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `DOMAIN` | the hostname from step 2 |
-| `CORS_ORIGINS` | `["https://app.example.com"]`: the frontend's exact origin; leave it out if there is no browser client yet |
+| `CORS_ORIGINS` | not needed when the dashboard is served by Caddy (same origin). Only for a frontend hosted elsewhere: its exact origin, e.g. `["https://app.example.com"]` |
 | `LANGSMITH_*` | optional; tracing a production job stores its pages and scenarios in LangSmith |
 
 `.env` is git-ignored: it never leaves the server except in your own backups.
@@ -84,8 +84,10 @@ docker compose --env-file .env -f app/docker-compose.yml -f app/docker-compose.p
 curl https://api.example.com/Health
 ```
 
-The first build takes a few minutes (Chromium). `ps` should show every service `healthy`;
-Caddy's log (`docker compose ... logs caddy`) shows the certificate being issued.
+The first build takes a few minutes (Chromium for the worker, `npm ci` for the dashboard).
+`ps` should show every service `healthy`; Caddy's log (`docker compose ... logs caddy`) shows
+the certificate being issued. Open `https://DOMAIN/` for the dashboard, `https://DOMAIN/docs`
+for the API.
 
 ### 5. Smoke test
 

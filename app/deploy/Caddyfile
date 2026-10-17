@@ -11,15 +11,17 @@
 		-Server
 	}
 
-	# API routes go to uvicorn. The frontend branch adds a `handle` block for everything
-	# else (the SPA files); until then an unknown path is a 404 from Caddy
+	# API routes go to uvicorn; everything else is the frontend (frontend/Dockerfile puts
+	# the Vite build in /srv). The SPA owns its routes, so unknown paths get index.html
 	@api path /auth/* /jobs /jobs/* /Health /docs /docs/* /openapi.json /redoc
 	handle @api {
 		reverse_proxy api:8000
 	}
 
 	handle {
-		respond "Not found" 404
+		root * /srv
+		try_files {path} /index.html
+		file_server
 	}
 
 	log {
