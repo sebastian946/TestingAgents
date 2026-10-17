@@ -8,7 +8,7 @@ DATABASE_URL = (
     f"@{settings.endpoint}:{settings.db_port}/{settings.db_name}"
 )
 
-engine = create_engine(DATABASE_URL, echo=True, pool_pre_ping=True)
+engine = create_engine(DATABASE_URL, echo=settings.sql_echo, pool_pre_ping=True)
 
 local_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

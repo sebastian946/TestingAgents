@@ -105,7 +105,8 @@ job (uuid) ──1:N──▶ pages (serial) ──1:N──▶ scenarios (seria
 
 | Table | Key fields |
 |---|---|
-| `job` | `id` UUID, `url`, `status` (`queued` / `running` / `done` / `failed`), `pages_crawled`, `total_scenarios`, `report_path`, `error`, `created_at`, `started_at`, `finished_at` |
+| `users` | `id` UUID, `email` (unique, lower-case), `password_hash` (argon2id), `is_active`, `created_at` |
+| `job` | `id` UUID, `user_id` (owner, NULL only for pre-WTA-26 rows), `url`, `status` (`queued` / `running` / `done` / `failed`), `pages_crawled`, `total_scenarios`, `report_path`, `error`, `created_at`, `started_at`, `finished_at` |
 | `pages` | `job_id`, `url`, `title`, `page_type`, `screenshot_path`, `elements` (JSONB `PageInfo` inventory: forms with fields, buttons, nav links, headings) |
 | `scenarios` | `job_id`, `page_id`, `scenario_code` (`SC-001`…, unique per job), `title`, `steps` (JSONB), `expected_result`, `priority`, `category` |
 
@@ -123,6 +124,8 @@ TestingAgents/
 └── app/                  # Python backend (uv project)
     ├── pyproject.toml / uv.lock
     ├── docker-compose.yml   # Postgres 16 + Redis 7 + api + worker
+    ├── docker-compose.prod.yml  # production overlay: Caddy/HTTPS, no public DB ports (docs/deployment.md)
+    ├── deploy/              # Caddyfile, backup.sh
     ├── Dockerfile           # targets `api` and `worker` (worker adds Chromium)
     ├── main.py              # FastAPI app, CORS, /Health
     ├── config/variables.py  # Settings (pydantic-settings) read from .env
@@ -132,7 +135,9 @@ TestingAgents/
     │   ├── db_crud.py       # database operations
     │   └── init_db.py       # creates the tables (development shortcut)
     ├── models/models.py     # Pydantic input/output schemas
-    ├── routes/routes.py     # /jobs endpoints
+    ├── routes/routes.py     # /jobs endpoints (every one needs a token)
+    ├── routes/auth_routes.py # /auth/register, /auth/login, /auth/me (WTA-26)
+    ├── security/auth.py     # password hashing, JWT, get_current_user
     ├── security/ssrf.py     # anti-SSRF validation of the job URL
     ├── db/redis/redis_conn.py  # Redis client, RQ queue, enqueue helper
     ├── worker/
@@ -165,6 +170,12 @@ copy .env.example .env
 | `DB_PORT` | port exposed on your machine | `5433` |
 | `ENDPOINT` | PostgreSQL host as seen from the API | `localhost` |
 | `REDIS_PORT` | exposed Redis port | `6379` |
+| `AUTH_SECRET_KEY` | signs the login tokens (WTA-26). **Required by the API**; generate it with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Changing it logs everyone out | placeholder (the API warns) |
+| `AUTH_TOKEN_EXPIRE_MINUTES` | token lifetime | `1440` (one day) |
+| `AUTH_MAX_JOBS_PER_HOUR` | jobs one account may create per rolling hour; `429` past it | `20` |
+| `CORS_ORIGINS` | JSON list of browser origins allowed by CORS | `["*"]` |
+| `SQL_ECHO` | print every SQL statement to the console | `true` (production: `false`) |
+| `REDIS_PASSWORD`, `DOMAIN` | production only, see [deployment.md](deployment.md) | unset |
 
 `DB_PORT` is `5433` rather than `5432` on purpose: if you have PostgreSQL installed on
 Windows, it takes 5432 and DBeaver or the API would connect to it instead of the container
@@ -239,6 +250,8 @@ docker compose --env-file .env -f app/docker-compose.yml logs -f worker         
 The services start in order through healthchecks: Postgres and Redis, then the api (which runs
 `python -m db.init_db` before uvicorn; it is idempotent), then the worker.
 
+For a real server (HTTPS, no published database ports, backups) see [deployment.md](deployment.md).
+
 `app/Dockerfile` has two targets from the same base: `api` (slim) and `worker` (adds Chromium
 only, via `playwright install --with-deps chromium`). To run the worker or the Playwright
 tests **outside** Docker, download the same browser once: `uv run playwright install chromium`
@@ -253,10 +266,19 @@ the `localhost` values for running outside Docker.
 
 ## API usage
 
+Every `/jobs` route requires a logged-in user (WTA-26): register or log in, then send
+`Authorization: Bearer <access_token>` on each request. Without it the answer is `401` with
+`WWW-Authenticate: Bearer`. Jobs belong to the account that created them: another user's job
+answers `404`, exactly like a job that does not exist. In Swagger (`/docs`), the **Authorize**
+button takes the token.
+
 | Method | Path | Response |
 |---|---|---|
-| `POST` | `/jobs` | body `{"url", "description"?, "language"?: "en" \| "es"}`; `202` with the created job; `400` if the URL is not http/https, does not resolve, or points to an internal network (anti-SSRF); `422` for an unsupported language |
-| `GET` | `/jobs` | list of jobs (newest first), optional `limit` and `offset` |
+| `POST` | `/auth/register` | body `{"email", "password"}` (8+ characters); `201` with `{access_token, token_type, expires_in, user}`; `409` if the email is taken; `422` if the email is malformed or the password too short |
+| `POST` | `/auth/login` | same body; `200` with the same token shape; `401` "Wrong email or password" (never says which) |
+| `GET` | `/auth/me` | the account behind the token |
+| `POST` | `/jobs` | body `{"url", "description"?, "language"?: "en" \| "es"}`; `202` with the created job; `400` if the URL is not http/https, does not resolve, or points to an internal network (anti-SSRF); `422` for an unsupported language; `429` + `Retry-After` past `AUTH_MAX_JOBS_PER_HOUR` |
+| `GET` | `/jobs` | the caller's jobs (newest first), optional `limit` and `offset` |
 | `GET` | `/jobs/{id}` | the job; `404` if it does not exist; `422` if the id is not a UUID |
 | `GET` | `/jobs/{id}/pages` | pages crawled for the job |
 | `GET` | `/jobs/{id}/scenarios` | scenarios generated for the job |
@@ -265,16 +287,36 @@ the `localhost` values for running outside Docker.
 | `DELETE` | `/jobs/{id}` | `204`; also deletes pages and scenarios |
 
 ```powershell
+# register (or log in) and keep the token
+$auth = Invoke-RestMethod -Method Post http://127.0.0.1:8000/auth/register `
+  -ContentType "application/json" -Body '{"email": "you@example.com", "password": "a-long-password"}'
+$headers = @{ Authorization = "Bearer $($auth.access_token)" }
+
 # create a job
-$job = Invoke-RestMethod -Method Post http://127.0.0.1:8000/jobs `
+$job = Invoke-RestMethod -Method Post http://127.0.0.1:8000/jobs -Headers $headers `
   -ContentType "application/json" -Body '{"url": "https://example.com", "language": "es"}'
 
 # fetch it (poll until status is "done")
-Invoke-RestMethod "http://127.0.0.1:8000/jobs/$($job.id)"
+Invoke-RestMethod "http://127.0.0.1:8000/jobs/$($job.id)" -Headers $headers
 
-# download the Excel report (in a browser, just open the URL)
-Invoke-WebRequest "http://127.0.0.1:8000/jobs/$($job.id)/report" -OutFile report.xlsx
+# download the Excel report
+Invoke-WebRequest "http://127.0.0.1:8000/jobs/$($job.id)/report" -Headers $headers -OutFile report.xlsx
 ```
+
+Passwords are stored as argon2id hashes; tokens are HS256 JWTs signed with
+`AUTH_SECRET_KEY`, with the user id and an expiry, and no server-side session. The design is
+[ADR-07](adr/ADR-07-jwt-auth-and-job-ownership.md); the code is `security/auth.py` and
+`routes/auth_routes.py`; `tests/test_auth.py` covers it.
+
+Databases created before WTA-26 need the owner column once (`init_db` adds the new `users`
+table but never alters `job`):
+
+```sql
+ALTER TABLE job ADD COLUMN user_id UUID REFERENCES users(id);
+CREATE INDEX ix_job_user_id ON job (user_id);
+```
+
+Jobs from before accounts existed keep `user_id = NULL` and are not visible through the API.
 
 ## Querying the scenarios (WTA-17)
 
@@ -682,7 +724,7 @@ Fields found outside any `<form>` (JS-driven logins) are grouped into a *virtual
 module. Measured on 9 real pages (2 logins, 2 forms, 1 product, 2 listings, 2 content
 pages): 9/9 correct; the signals that mattered are in `tests/test_page_classifier.py`.
 To improve a rule, add the failing page as a unit test first, then adjust the threshold.
-- `create_engine(..., echo=True)` prints SQL to the console; turn it off if it gets noisy.
+- `create_engine(..., echo=settings.sql_echo)` prints SQL to the console; `SQL_ECHO=false` turns it off.
 
 ## Next steps (per the board)
 

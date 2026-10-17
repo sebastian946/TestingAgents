@@ -5,7 +5,7 @@ from rq import Queue
 
 from config.variables import settings
 
-redis_client = Redis(host=settings.redis_host, port=settings.redis_port, db=0)
+redis_client = Redis(host=settings.redis_host, port=settings.redis_port, db=0, password=settings.redis_password)
 job_queue = Queue(settings.rq_queue_name, connection=redis_client)
 
 

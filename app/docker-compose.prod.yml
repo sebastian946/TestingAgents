@@ -1,0 +1,55 @@
+# Production overlay (WTA-26). Always together with docker-compose.yml, from the repo root:
+#
+#   docker compose --env-file .env -f app/docker-compose.yml -f app/docker-compose.prod.yml up -d --build
+#
+# What it changes, and why (docs/deployment.md has the full procedure):
+#   - No database, Redis or API port is published on the host: only Caddy listens (80/443),
+#     and the services talk over the compose network. Published ports bypass ufw.
+#   - Redis requires a password (REDIS_PASSWORD): anyone who could reach it could enqueue jobs.
+#   - Caddy terminates HTTPS with an automatic Let's Encrypt certificate for DOMAIN and
+#     proxies the API; the frontend (its own branch) is served by the same Caddy.
+#   - SQL echo off: every statement, LLM text included, would otherwise go to the logs.
+services:
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  api:
+    ports: !reset []
+    environment:
+      SQL_ECHO: "false"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  worker:
+    environment:
+      SQL_ECHO: "false"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env (the public hostname)}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # certificates: keep them, Let's Encrypt rate-limits re-issues
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:

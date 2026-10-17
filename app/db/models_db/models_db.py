@@ -23,10 +23,27 @@ class JobStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class User(Base):
+    """An account (WTA-26). Jobs belong to a user and are only visible to that user."""
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(320), unique=True)  # stored lower-case
+    password_hash: Mapped[str] = mapped_column(String(255))  # argon2 (security/auth.py)
+    is_active: Mapped[bool] = mapped_column(default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    jobs: Mapped[list["Job"]] = relationship(back_populates="user")
+
+
 class Job(Base):
     __tablename__ = "job"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    # Nullable only for rows created before accounts existed: the API never creates one
+    # without an owner, and ownerless jobs are not visible through it
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), index=True)
     url: Mapped[str] = mapped_column(Text)
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, name="job_status", values_callable=lambda e: [m.value for m in e]),
@@ -43,6 +60,7 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    user: Mapped["User | None"] = relationship(back_populates="jobs")
     pages: Mapped[list["Page"]] = relationship(back_populates="job", cascade="all, delete-orphan")
     scenarios: Mapped[list["Scenario"]] = relationship(back_populates="job", cascade="all, delete-orphan")
     llm_calls: Mapped[list["LlmCall"]] = relationship(back_populates="job", cascade="all, delete-orphan")

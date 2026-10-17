@@ -1,0 +1,29 @@
+# Reverse proxy for production (docker-compose.prod.yml). Caddy obtains and renews the
+# Let's Encrypt certificate for {$DOMAIN} by itself: ports 80 and 443 must reach it.
+{$DOMAIN} {
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# API routes go to uvicorn. The frontend branch adds a `handle` block for everything
+	# else (the SPA files); until then an unknown path is a 404 from Caddy
+	@api path /auth/* /jobs /jobs/* /Health /docs /docs/* /openapi.json /redoc
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		respond "Not found" 404
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
