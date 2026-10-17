@@ -50,6 +50,8 @@ export interface Job {
   url: string
   description: string | null
   language: Language
+  /** The login page when the site was explored logged in; credentials are never returned */
+  login_url: string | null
   status: JobStatus
   pages_crawled: number
   total_scenarios: number
@@ -94,10 +96,19 @@ export interface Usage {
   by_model: { model: string; calls: number; cost_usd: number }[]
 }
 
+export interface JobLogin {
+  login_url?: string
+  username: string
+  password: string
+  authorized: boolean
+}
+
 export interface JobCreate {
   url: string
   description?: string
   language: Language
+  /** Log in before exploring (WTA-29): used once for this job, then deleted server-side */
+  login?: JobLogin
 }
 
 // ---------------------------------------------------------------- errors

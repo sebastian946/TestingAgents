@@ -26,11 +26,12 @@ from langgraph.graph import END, START, StateGraph
 
 from agents.designer import CallUsage, PageDesign, PageLike, design_pages
 from agents.documenter import generate_report, report_file
-from agents.explorer import CrawledPage, crawl
+from agents.explorer import CrawledPage, LoginResult, crawl
 from agents.state import PageGap, PageState, TestingState
 from config.variables import settings
 from db import db_crud
 from db.conn import local_session
+from security import credentials
 
 NO_PAGES_ERROR = "No page could be fetched from the given URL."
 
@@ -49,10 +50,27 @@ class _Page:
 # ----------------------------------------------------------------------------- nodes
 
 def explorer(state: TestingState) -> dict:
-    """Reads job_id, url. Writes pages."""
+    """Reads job_id, url. Writes pages, login_note."""
     job_id = state["job_id"]
     job_uuid = uuid.UUID(job_id)
     found: list[PageState] = []
+    login_note: str | None = None
+
+    # WTA-29: the credentials never enter the state (which is logged and traced); they are
+    # read from the row here, used by the browser, and forgotten right after the crawl
+    login = None
+    with local_session() as db:
+        job = db_crud.get_job(db, job_uuid)
+        blob = job.login_credentials if job else None
+    if blob:
+        try:
+            login = credentials.decrypt(blob)
+        except credentials.CredentialsError as exc:
+            login_note = f"Login skipped: {exc}"
+
+    def note_login(outcome: LoginResult) -> None:
+        nonlocal login_note
+        login_note = None if outcome.ok else outcome.message
 
     def persist_page(page: CrawledPage) -> None:
         # One short transaction per page (WTA-14): the row and the pages_crawled increment
@@ -80,9 +98,15 @@ def explorer(state: TestingState) -> dict:
     report_file(settings.reports_dir, job_id).unlink(missing_ok=True)
 
     # use_browser: render JavaScript and extract the PageInfo inventory (WTA-11)
-    crawl(state["url"], on_page=persist_page, use_browser=True, screenshot_dir=screenshot_dir)
+    try:
+        crawl(state["url"], on_page=persist_page, use_browser=True, screenshot_dir=screenshot_dir,
+              login=login, on_login=note_login)
+    finally:
+        if blob:  # the browser is closed: nothing needs the secret any more, whatever happened
+            with local_session() as db:
+                db_crud.clear_job_credentials(db, job_uuid)
     print(f"[graph] explorer: {len(found)} pages")
-    return {"pages": found}
+    return {"pages": found, "login_note": login_note}
 
 
 def designer(state: TestingState) -> dict:
@@ -137,11 +161,14 @@ def documenter(state: TestingState) -> dict:
     """Reads job_id, pages, pages_without_scenarios. Writes report_path, status, error."""
     job_uuid = uuid.UUID(state["job_id"])
     gaps = state.get("pages_without_scenarios", [])
-    summary = None
+    notes = []
+    if state.get("login_note"):  # WTA-29: a failed login is a gap the customer must know about
+        notes.append(f"{state['login_note']} The site was explored as an anonymous visitor.")
     if gaps:
-        summary = f"No scenarios for {len(gaps)} of {len(state.get('pages', []))} pages: " + "; ".join(
+        notes.append(f"No scenarios for {len(gaps)} of {len(state.get('pages', []))} pages: " + "; ".join(
             f"{g['url']} ({g['error']})" for g in gaps
-        )
+        ))
+    summary = " ".join(notes) or None
     # The report is built from what is in the database (WTA-19). Only then is the job DONE,
     # so a done job always has its report
     with local_session() as db:

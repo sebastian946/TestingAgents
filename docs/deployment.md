@@ -71,6 +71,7 @@ Set in `.env`:
 | `AUTH_SECRET_KEY` | `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` |
 | `REDIS_PASSWORD` | `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `DOMAIN` | the hostname from step 2 |
+| `CREDENTIALS_KEY` | `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`: encrypts the login credentials customers give for a job (deleted after the crawl). Without it, jobs with a login are refused |
 | `CORS_ORIGINS` | not needed when the dashboard is served by Caddy (same origin). Only for a frontend hosted elsewhere: its exact origin, e.g. `["https://app.example.com"]` |
 | `EMAIL_BACKEND=resend`, `RESEND_API_KEY`, `EMAIL_FROM` | verification and reset emails. Create a free account at resend.com, add your domain (two DNS records they show you), create an API key, and use a sender on that domain, e.g. `Testing Agents <no-reply@example.com>`. With `console` nobody receives the links |
 | `APP_URL` | `https://app.example.com`: the links in emails point here |
@@ -155,6 +156,7 @@ Restore: `gunzip -c db-2026-10-16-0300.sql.gz | docker exec -i postgres_db psql 
 - [ ] `AUTH_SECRET_KEY`, `REDIS_PASSWORD`, `DB_PASSWORD` are long random values (the API logs
       a warning at start when the auth key is short or the placeholder).
 - [ ] `ANTHROPIC_API_KEY` has a spend limit.
+- [ ] `CREDENTIALS_KEY` set, if customers will test sites behind a login.
 - [ ] `EMAIL_BACKEND=resend` with the domain verified: register a test account and click the link you receive.
 - [ ] `ufw` is on, and `docker compose ... ps` shows only Caddy with published ports.
 - [ ] `https://DOMAIN/Health` answers over HTTPS; `http://` redirects.
