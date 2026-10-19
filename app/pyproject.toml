@@ -28,6 +28,7 @@ dependencies = [
     "redis>=8.1.0",
     "requests>=2.34.2",
     "rq>=2.12.0",
+    "sentry-sdk[fastapi]>=2.72.0",
     "sqlalchemy>=2.1.1",
     "uvicorn>=0.54.0",
 ]

@@ -185,7 +185,8 @@ curl -X POST http://localhost:8000/jobs \
 For a site whose content is behind a login, add `"login": {"login_url": "...", "username": "...", "password": "...", "authorized": true}`:
 the explorer signs in first (use a **test account** on a **test environment**); the credentials are encrypted,
 used for this job only and deleted when the exploration ends. The response only echoes `login_url`.
-Each account may create `AUTH_MAX_JOBS_PER_HOUR` jobs per hour (default 20): past that, `429`.
+Each account may create `AUTH_MAX_JOBS_PER_HOUR` jobs per hour (default 20): past that, `429`. Past the
+plan's monthly allowance (`GET /billing/me`), `402` with the numbers.
 
 ```json
 202 Accepted
@@ -250,6 +251,8 @@ curl -OJ -H "Authorization: Bearer $TOKEN" http://localhost:8000/jobs/77ac7e6a-6
 | `GET /jobs/{id}/pages` | The crawled pages, with their type and element inventory |
 | `GET /jobs/{id}/scenarios` | The scenarios (`SC-001`…), with steps and expected result |
 | `GET /jobs/{id}/usage` | LLM calls, tokens and estimated cost of the job |
+| `GET /billing/me` | Plan, jobs used this month, upgrade links |
+| `DELETE /auth/me` | Deletes the account with everything it owns (password confirmation) |
 | `DELETE /jobs/{id}` | Deletes the job, its pages and scenarios |
 | `GET /Health` | Health check (public) |
 
@@ -268,6 +271,7 @@ Each decision is a short ADR (context → decision → consequence) in [docs/adr
 | [05](docs/adr/ADR-05-langgraph-and-official-sdk.md) | **LangGraph for the pipeline, the official Anthropic SDK with structured outputs** | An explicit graph with `fail` edges, testable node by node. The JSON schema guarantees the shape of the output, and a single self-healing retry fixes what the schema cannot check. |
 | [06](docs/adr/ADR-06-llm-cost-ledger.md) | **One `llm_calls` row per billed call** | Retries, refusals and fallbacks are billed too. With a ledger, the cost of a job is a `SUM`, and the price of the SaaS can be based on real numbers. |
 | [07](docs/adr/ADR-07-jwt-auth-and-job-ownership.md) | **Email + password accounts, JWT tokens, jobs owned per user** | Every job costs money, so the API cannot be open. Stateless tokens keep the API horizontal; an hourly job limit caps the damage of a leaked token. |
+| [09](docs/adr/ADR-09-billing-merchant-of-record.md) | **Billing through a Merchant of Record (Lemon Squeezy); plans are monthly job allowances** | Selling globally from Colombia: the provider is the legal seller and handles taxes and invoices. Our side is one `subscriptions` row per user written by signed webhooks, and a `402` at `POST /jobs` past the allowance. |
 | [08](docs/adr/ADR-08-authenticated-crawls.md) | **Sites behind a login: credentials per job, encrypted, deleted after the crawl** | Most products live behind a login. The secret lives minutes, never reaches the state, the logs or the LLM; the crawler skips action links while logged in; the customer uses a test account and confirms authorization. |
 
 ## Deployment
@@ -308,7 +312,7 @@ flow, from `POST /jobs` to the downloaded Excel file. Details in the
 **Engine**
 - Automatic retries of failed jobs (WTA-8).
 - Close ADR-02 with the eval on real sites, and prompt v4 based on its results.
-- Team accounts, per-plan usage limits and billing.
+- Team accounts, metered overages, a nightly reconciliation with the payment provider.
 
 ## Documentation
 

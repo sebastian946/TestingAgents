@@ -41,6 +41,32 @@ class User(Base):
 
     jobs: Mapped[list["Job"]] = relationship(back_populates="user")
     email_tokens: Mapped[list["EmailToken"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    subscription: Mapped["Subscription | None"] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+class Subscription(Base):
+    """What the payment provider told us about a user's plan (WTA-30, ADR-09).
+
+    One row per user, written only by the provider's webhook. `status` is the provider's
+    own vocabulary (active, on_trial, past_due, cancelled, expired, ...); `plan` is ours
+    (config/plans.py). A cancelled subscription keeps its plan until `current_period_end`.
+    """
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+    plan: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20))
+    provider: Mapped[str] = mapped_column(String(20))  # lemonsqueezy
+    provider_subscription_id: Mapped[str] = mapped_column(String(64), unique=True)
+    provider_customer_id: Mapped[str | None] = mapped_column(String(64))
+    customer_portal_url: Mapped[str | None] = mapped_column(Text)  # where the user manages / cancels
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="subscription")
 
 
 class EmailToken(Base):

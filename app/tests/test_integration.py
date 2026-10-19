@@ -212,6 +212,8 @@ def stack(services, tmp_path_factory):
         "RQ_QUEUE_NAME": f"integration-{uuid.uuid4().hex[:8]}",  # nobody else listens here
         "REPORTS_DIR": str(run_dir / "reports"),
         "DESIGNER_MODE": "fake",
+        "DEFAULT_PLAN": "pro",
+        "PWNED_PASSWORDS_CHECK": "false",  # no third-party calls from tests
         "SSRF_ALLOWED_HOSTS": json.dumps(["127.0.0.1"]),
         "LANGSMITH_TRACING": "false",
         "ANTHROPIC_API_KEY": "sk-ant-test-not-a-real-key",

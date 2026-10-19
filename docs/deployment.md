@@ -71,6 +71,10 @@ Set in `.env`:
 | `AUTH_SECRET_KEY` | `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` |
 | `REDIS_PASSWORD` | `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `DOMAIN` | the hostname from step 2 |
+| `SENTRY_DSN`, `SENTRY_ENVIRONMENT=production` | error reports with the stack trace, by email, from sentry.io (free plan). Create a project of type FastAPI and copy its DSN |
+| `LEMONSQUEEZY_WEBHOOK_SECRET`, `LEMONSQUEEZY_VARIANT_STARTER`, `LEMONSQUEEZY_VARIANT_PRO`, `LEMONSQUEEZY_CHECKOUT_STARTER_URL`, `LEMONSQUEEZY_CHECKOUT_PRO_URL` | billing (ADR-09). In Lemon Squeezy: create a store, two subscription products (Starter US$29/month, Pro US$99/month), copy each variant id and its "Share" checkout URL, and add a webhook to `https://DOMAIN/billing/webhook/lemonsqueezy` with the subscription events and a signing secret. Without these, everyone stays on `DEFAULT_PLAN` and the dashboard says payments are not enabled |
+| `DEFAULT_PLAN` | `free` in production |
+| `RETENTION_DAYS` | `90`: finished jobs older than that are deleted with their files |
 | `CREDENTIALS_KEY` | `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`: encrypts the login credentials customers give for a job (deleted after the crawl). Without it, jobs with a login are refused |
 | `CORS_ORIGINS` | not needed when the dashboard is served by Caddy (same origin). Only for a frontend hosted elsewhere: its exact origin, e.g. `["https://app.example.com"]` |
 | `EMAIL_BACKEND=resend`, `RESEND_API_KEY`, `EMAIL_FROM` | verification and reset emails. Create a free account at resend.com, add your domain (two DNS records they show you), create an API key, and use a sender on that domain, e.g. `Testing Agents <no-reply@example.com>`. With `console` nobody receives the links |
@@ -144,6 +148,26 @@ Restore: `gunzip -c db-2026-10-16-0300.sql.gz | docker exec -i postgres_db psql 
 - Logs: `docker compose ... logs -f worker` (or `api`, `caddy`). Docker keeps them on disk;
   add `logging: {options: {max-size: "50m", max-file: "3"}}` to the services if they grow.
 
+## Security posture
+
+What the deployment gives you, so you can answer customers' questions:
+
+- Transport: HTTPS only (Caddy, Let's Encrypt, HSTS), HTTP redirects. Security headers
+  including a strict `Content-Security-Policy` for the dashboard.
+- Network: only Caddy is reachable from the internet; Postgres, Redis and the API talk over
+  the compose network. Redis requires a password.
+- Processes: the API and the worker run as an unprivileged user with every Linux capability
+  dropped and `no-new-privileges`. The worker's Chromium, which visits third-party sites, has
+  no path to the host.
+- Accounts: argon2id password hashes, leaked-password check, rate limits on login and reset,
+  email verification before spending, JWTs that die on password reset.
+- Secrets customers give us: per-job login credentials encrypted with Fernet, deleted right
+  after the crawl, never logged or sent to the LLM (ADR-08).
+- Data: jobs belong to one account, deletable by its owner together with the account;
+  finished jobs expire after `RETENTION_DAYS`; nightly encrypted backups you keep off-site.
+- Payments: never touch our servers (Merchant of Record, ADR-09).
+- Dependencies: Dependabot opens PRs for vulnerable packages; Sentry reports runtime errors.
+
 ## Scaling later
 
 - More throughput on the same server: `docker compose ... up -d --scale worker=3`. Workers
@@ -157,6 +181,11 @@ Restore: `gunzip -c db-2026-10-16-0300.sql.gz | docker exec -i postgres_db psql 
       a warning at start when the auth key is short or the placeholder).
 - [ ] `ANTHROPIC_API_KEY` has a spend limit.
 - [ ] `CREDENTIALS_KEY` set, if customers will test sites behind a login.
+- [ ] `SENTRY_DSN` set and a test error visible in Sentry.
+- [ ] Lemon Squeezy: webhook created and a test purchase (test mode) upgraded an account; `DEFAULT_PLAN=free`.
+- [ ] A backup dump restored on a clean database at least once.
+- [ ] Terms of service and privacy policy linked from the registration page.
+- [ ] Dependabot enabled in the repository settings (`.github/dependabot.yml` is in place).
 - [ ] `EMAIL_BACKEND=resend` with the domain verified: register a test account and click the link you receive.
 - [ ] `ufw` is on, and `docker compose ... ps` shows only Caddy with published ports.
 - [ ] `https://DOMAIN/Health` answers over HTTPS; `http://` redirects.

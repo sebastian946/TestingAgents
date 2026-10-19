@@ -46,6 +46,33 @@ class Settings(BaseSettings):
     auth_verify_token_hours: int = 48
     auth_reset_token_minutes: int = 60
 
+    # Reliability (WTA-8): a job that raises is re-enqueued up to this many times (the crawl
+    # restarts from scratch, mark_job_running wipes the previous attempt), and no single
+    # attempt may run longer than the timeout (RQ kills it and it counts as a failure)
+    job_max_retries: int = 1
+    job_timeout_seconds: int = 15 * 60
+    # Abuse protection (WTA-30): rate limits on login/register/reset (security/ratelimit.py)
+    # and the leaked-password check against Have I Been Pwned (security/passwords.py)
+    rate_limit_enabled: bool = True
+    pwned_passwords_check: bool = True
+    # Error reporting (WTA-30): empty = off
+    sentry_dsn: str | None = None
+    sentry_environment: str = "development"
+    # Data retention (WTA-30): finished jobs older than this are deleted with their pages,
+    # scenarios and files, by the worker. 0 = keep forever
+    retention_days: int = 90
+
+    # Billing (WTA-30, ADR-09) through Lemon Squeezy, a Merchant of Record. The webhook
+    # secret signs every event; the variant ids map a purchase to a plan (config/plans.py);
+    # the checkout URLs are the hosted "buy" links shown in the dashboard. Accounts without
+    # a subscription are on DEFAULT_PLAN
+    default_plan: str = "free"
+    lemonsqueezy_webhook_secret: str | None = None
+    lemonsqueezy_variant_starter: str | None = None
+    lemonsqueezy_variant_pro: str | None = None
+    lemonsqueezy_checkout_starter_url: str | None = None
+    lemonsqueezy_checkout_pro_url: str | None = None
+
     # Fernet key that encrypts the login credentials a user gives for one job (WTA-29).
     # Optional: without it, jobs with a login are refused. Generate with
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

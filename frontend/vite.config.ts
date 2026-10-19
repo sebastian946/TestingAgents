@@ -11,6 +11,7 @@ export default defineConfig({
     proxy: {
       '/auth': 'http://127.0.0.1:8000',
       '/jobs': 'http://127.0.0.1:8000',
+      '/billing': 'http://127.0.0.1:8000',
       '/Health': 'http://127.0.0.1:8000',
     },
   },

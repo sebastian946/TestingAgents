@@ -181,6 +181,13 @@ copy .env.example .env
 | `RESEND_API_KEY`, `EMAIL_FROM` | Resend key and verified sender (`Name <no-reply@yourdomain.com>`) | unset |
 | `APP_URL` | public URL of the dashboard, used in the email links | `http://localhost:5173` |
 | `CORS_ORIGINS` | JSON list of browser origins allowed by CORS | `["*"]` |
+| `JOB_TIMEOUT_SECONDS`, `JOB_MAX_RETRIES` | hard limit per attempt and automatic retries of a job that raises (WTA-8) | `900`, `1` |
+| `RATE_LIMIT_ENABLED` | limits on login / register / reset endpoints, counted in Redis | `true` |
+| `PWNED_PASSWORDS_CHECK` | reject passwords found in known breaches (Have I Been Pwned, k-anonymity) | `true` |
+| `SENTRY_DSN`, `SENTRY_ENVIRONMENT` | error reporting; empty = off | unset, `development` |
+| `RETENTION_DAYS` | finished jobs older than this are deleted by the worker; `0` keeps everything | `90` |
+| `DEFAULT_PLAN` | plan of accounts without a subscription (`free`, `starter`, `pro`) | `free` |
+| `LEMONSQUEEZY_*` | webhook secret, variant ids and checkout URLs; see [deployment.md](deployment.md) | unset |
 | `CREDENTIALS_KEY` | Fernet key for the per-job login credentials (WTA-29); without it, jobs with a login get `503` | unset |
 | `SQL_ECHO` | print every SQL statement to the console | `true` (production: `false`) |
 | `REDIS_PASSWORD`, `DOMAIN` | production only, see [deployment.md](deployment.md) | unset |
@@ -377,6 +384,45 @@ login page must pass the anti-SSRF check and be on the same host as the job URL.
 site with a cookie session, crawled in Chromium).
 
 Not supported: 2FA, captchas, social login. Ask the customer for a test account without them.
+
+### Plans and billing (WTA-30)
+
+Plans are monthly job allowances (`config/plans.py`: Free 3, Starter 30, Pro 150). `GET
+/billing/me` returns the plan in force, the jobs used this calendar month, the remaining
+allowance, the provider's status, and the hosted checkout links (with the user's email and
+id prefilled). `POST /jobs` answers `402` with `{message, plan, used, limit}` past the
+allowance. Payments go through Lemon Squeezy (a Merchant of Record, [ADR-09](adr/ADR-09-billing-merchant-of-record.md)):
+`POST /billing/webhook/lemonsqueezy` verifies the `X-Signature` HMAC on the raw body and
+upserts the user's `subscriptions` row (`services/billing.py`). Statuses `active`,
+`on_trial` and `past_due` keep the plan; `cancelled` keeps it until `current_period_end`;
+anything else falls back to `DEFAULT_PLAN`. Tests: `tests/test_billing_and_retention.py`.
+
+### Account deletion and retention (WTA-30)
+
+`DELETE /auth/me` with `{"password"}` deletes the user with every job (pages, scenarios,
+LLM calls), its tokens, its subscription row and the files under `reports/`
+(`services/cleanup.py`). The worker deletes finished jobs older than `RETENTION_DAYS` with
+their files, at start and every 6 hours (`purge_expired_jobs`). Deleting a job through the
+API removes its files too.
+
+### Abuse protection (WTA-30)
+
+`security/ratelimit.py`: fixed-window counters in Redis (`MemoryBackend` in tests), per IP
+and per email/user, on login (20/15 min per IP, 10 per email), register (10/h per IP),
+forgot-password (20/h per IP, 5/h per email), token endpoints (30/h per IP) and
+verification resends (5/h per user). A `429` carries `Retry-After`. The limiter fails open
+when Redis is down. Behind Caddy, uvicorn runs with `--proxy-headers` so the client IP is
+the real one. `security/passwords.py` rejects passwords found in breaches (HIBP range API,
+only the first 5 hex of the SHA-1 leave the server; fails open).
+
+### Reliability (WTA-8)
+
+Jobs are enqueued with `job_timeout=JOB_TIMEOUT_SECONDS` and `Retry(max=JOB_MAX_RETRIES)`
+(`db/redis/redis_conn.py`). A task that raises marks the job `failed` with the reason and,
+while retries remain, "Retrying automatically (N attempts left)"; RQ re-enqueues it and
+`mark_job_running` wipes the previous attempt. A timeout reads "exceeded the time limit of
+15 minutes". Sentry (`observability.py`) reports exceptions from the API and the worker when
+`SENTRY_DSN` is set, without personal data.
 
 ## Querying the scenarios (WTA-17)
 

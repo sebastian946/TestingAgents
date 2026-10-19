@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from db.models_db.models_db import EmailToken, Job, JobStatus, LlmCall, Page, Scenario, User
+from db.models_db.models_db import EmailToken, Job, JobStatus, LlmCall, Page, Scenario, Subscription, User
 
 
 def _now() -> datetime:
@@ -84,6 +84,46 @@ def consume_email_token(db: Session, raw: str, purpose: str) -> User | None:
         return None
     token.used_at = _now()
     return db.get(User, token.user_id)
+
+
+def delete_user(db: Session, user_id: uuid.UUID) -> list[uuid.UUID]:
+    """Delete an account with its jobs (ORM cascade: pages, scenarios, llm_calls), tokens
+    and subscription. Returns the deleted job ids so the caller can remove their files."""
+    user = db.get(User, user_id)
+    if user is None:
+        return []
+    job_ids = list(db.scalars(select(Job.id).where(Job.user_id == user_id)))
+    for job in db.scalars(select(Job).where(Job.user_id == user_id)):
+        db.delete(job)
+    db.delete(user)
+    db.commit()
+    return job_ids
+
+
+def list_finished_jobs_before(db: Session, cutoff: datetime) -> list[uuid.UUID]:
+    """Ids of done/failed jobs that finished before `cutoff` (the retention sweep)."""
+    stmt = select(Job.id).where(Job.status.in_([JobStatus.DONE, JobStatus.FAILED]), Job.finished_at < cutoff)
+    return list(db.scalars(stmt))
+
+
+# ------------------------------------------------------- Subscriptions (WTA-30)
+
+def get_subscription(db: Session, user_id: uuid.UUID) -> Subscription | None:
+    return db.scalars(select(Subscription).where(Subscription.user_id == user_id)).first()
+
+
+def upsert_subscription(db: Session, user_id: uuid.UUID, **fields) -> Subscription:
+    """One subscription per user: the webhook creates it or updates it in place."""
+    subscription = get_subscription(db, user_id)
+    if subscription is None:
+        subscription = Subscription(user_id=user_id, **fields)
+        db.add(subscription)
+    else:
+        for key, value in fields.items():
+            setattr(subscription, key, value)
+    db.commit()
+    db.refresh(subscription)
+    return subscription
 
 
 def count_jobs_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:

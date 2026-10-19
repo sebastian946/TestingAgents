@@ -6,6 +6,8 @@ The work itself is the LangGraph pipeline in `agents.graph` (WTA-21).
 """
 import uuid
 
+from rq import get_current_job
+
 from agents import graph
 from config.variables import TRACING_ENABLED, settings
 from db import db_crud
@@ -28,6 +30,25 @@ def _trace_config(job_id: str, url: str, language: str = "en") -> dict:
             "language": language,
         },
     }
+
+
+def _retries_left() -> int:
+    """Attempts RQ will still make for the current job (0 outside a worker)."""
+    try:
+        job = get_current_job()
+    except Exception:  # no Redis connection (tests)
+        return 0
+    return int(getattr(job, "retries_left", 0) or 0) if job is not None else 0
+
+
+def _failure_reason(exc: Exception) -> str:
+    text = str(exc) or exc.__class__.__name__
+    if exc.__class__.__name__ == "JobTimeoutException":
+        text = f"The job exceeded the time limit of {settings.job_timeout_seconds // 60} minutes."
+    left = _retries_left()
+    if left > 0:
+        text += f" Retrying automatically ({left} attempt{'s' if left != 1 else ''} left)."
+    return text
 
 
 def _flush_traces() -> None:
@@ -66,12 +87,15 @@ def process_url_task(job_id: str) -> None:
         config = _trace_config(job_id, initial_state["url"], initial_state["language"])
         final_state = graph.testing_graph.invoke(initial_state, config=config)
     except Exception as e:
-        # Real errors (browser crash, invalid API key, database down). "Nothing to work
-        # with" is not an exception: the graph routes it to its `fail` node.
+        # Real errors (browser crash, invalid API key, database down, the RQ timeout).
+        # "Nothing to work with" is not an exception: the graph routes it to its `fail`
+        # node. RQ re-enqueues the job while it has retries left (WTA-8); the job row says
+        # so, so a client polling it knows another attempt is coming
+        reason = _failure_reason(e)
         with local_session() as db:
-            db_crud.mark_job_failed(db, job_uuid, str(e))
-        print(f"Error occurred while processing job {job_id}: {e}")
-        raise  # let RQ also register the job as failed
+            db_crud.mark_job_failed(db, job_uuid, reason)
+        print(f"Error occurred while processing job {job_id}: {reason}")
+        raise  # let RQ register the failure (and retry, if any attempts are left)
     finally:
         _flush_traces()
 

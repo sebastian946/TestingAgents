@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 import { api, ApiError, type Language } from '../api'
 import { ErrorBox } from '../components/ui'
@@ -14,6 +14,7 @@ export function NewJobPage() {
   const [password, setPassword] = useState('')
   const [authorized, setAuthorized] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [quotaExceeded, setQuotaExceeded] = useState(false)
   const [busy, setBusy] = useState(false)
   const navigate = useNavigate()
 
@@ -31,6 +32,7 @@ export function NewJobPage() {
       navigate(`/job/${job.id}`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create the job.')
+      setQuotaExceeded(err instanceof ApiError && err.status === 402)
     } finally {
       setBusy(false)
     }
@@ -125,6 +127,13 @@ export function NewJobPage() {
           )}
         </fieldset>
         <ErrorBox message={error} />
+        {quotaExceeded && (
+          <p className="text-sm">
+            <Link to="/billing" className="font-medium text-indigo-600 hover:underline">
+              See plans and upgrade
+            </Link>
+          </p>
+        )}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-secondary" onClick={() => navigate(-1)} disabled={busy}>
             Cancel
