@@ -21,7 +21,7 @@ URL = "https://shop.example/"
 
 # What each node may write (agents/state.py). Checked on every update the graph emits.
 OWNED_KEYS = {
-    "explorer": {"pages"},
+    "explorer": {"pages", "login_note"},
     "designer": {"scenarios_designed", "pages_without_scenarios"},
     "documenter": {"report_path", "status", "error"},
     "fail": {"status", "error"},

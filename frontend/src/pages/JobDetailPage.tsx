@@ -134,6 +134,15 @@ export function JobDetailPage() {
         <Stat label="LLM cost" value={usage ? `US$${usage.cost_usd.toFixed(4)}` : '—'} hint={usage ? `${usage.calls} calls` : undefined} />
       </dl>
 
+      {job.login_url && (
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          <span className="font-medium">Explored logged in</span> via{' '}
+          <a href={job.login_url} target="_blank" rel="noreferrer" className="underline">
+            {job.login_url}
+          </a>
+          . The credentials were deleted when the exploration ended.
+        </p>
+      )}
       {job.description && (
         <p className="text-sm text-slate-600 dark:text-slate-300">
           <span className="font-medium">Description: </span>

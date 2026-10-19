@@ -8,6 +8,7 @@ into the state before the next node runs. Ownership:
 |---------------------------|--------------------|---------------------------------|
 | job_id, url, description, language | the worker (input) | explorer, designer, documenter |
 | pages                     | explorer           | route_after_explorer, designer, fail |
+| login_note                | explorer           | documenter                      |
 | scenarios_designed        | designer           | route_after_designer, fail      |
 | pages_without_scenarios   | designer           | documenter, fail                |
 | report_path               | documenter         | the worker (output)             |
@@ -50,6 +51,7 @@ class TestingState(TypedDict):
 
     # explorer
     pages: NotRequired[list[PageState]]
+    login_note: NotRequired[str | None]  # why the login did not work (WTA-29); None when fine or not requested
 
     # designer
     scenarios_designed: NotRequired[int]
