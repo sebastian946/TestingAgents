@@ -34,6 +34,7 @@ export type JobStatus = 'queued' | 'running' | 'done' | 'failed'
 export interface User {
   id: string
   email: string
+  email_verified: boolean
   created_at: string
 }
 
@@ -164,6 +165,10 @@ export const api = {
   register: (email: string, password: string) => request<Token>('POST', '/auth/register', { email, password }),
   login: (email: string, password: string) => request<Token>('POST', '/auth/login', { email, password }),
   me: () => request<User>('GET', '/auth/me'),
+  requestVerification: () => request<{ detail: string }>('POST', '/auth/verify/request'),
+  verifyEmail: (token: string) => request<User>('POST', '/auth/verify', { token }),
+  forgotPassword: (email: string) => request<{ detail: string }>('POST', '/auth/password/forgot', { email }),
+  resetPassword: (token: string, password: string) => request<Token>('POST', '/auth/password/reset', { token, password }),
 
   listJobs: (limit = 50) => request<Job[]>('GET', `/jobs?limit=${limit}`),
   createJob: (payload: JobCreate) => request<Job>('POST', '/jobs', payload),

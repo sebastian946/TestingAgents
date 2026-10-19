@@ -66,7 +66,15 @@ export function AuthForm({ title, submitLabel, onSubmit, footer }: Props) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            {submitLabel !== 'Log in' && <p className="mt-1 text-xs text-slate-500">At least 8 characters.</p>}
+            {submitLabel !== 'Log in' ? (
+              <p className="mt-1 text-xs text-slate-500">At least 8 characters.</p>
+            ) : (
+              <p className="mt-1 text-right text-xs">
+                <Link to="/forgot-password" className="text-indigo-600 hover:underline">
+                  Forgot your password?
+                </Link>
+              </p>
+            )}
           </div>
           <ErrorBox message={error} />
           <button type="submit" className="btn-primary w-full" disabled={busy}>

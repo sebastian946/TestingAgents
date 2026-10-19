@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from config.languages import DEFAULT_LANGUAGE, Language
 from db.models_db.models_db import JobStatus
@@ -23,7 +23,36 @@ class UserRead(BaseModel):
 
     id: uuid.UUID
     email: str
+    email_verified: bool = Field(default=False, description="Whether the verification link was clicked")
     created_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _verified_from_timestamp(cls, data):
+        # The ORM row has `email_verified_at`; the API shows a plain boolean
+        if hasattr(data, "email_verified_at"):
+            return {"id": data.id, "email": data.email, "created_at": data.created_at,
+                    "email_verified": data.email_verified_at is not None}
+        return data
+
+
+class EmailRequest(BaseModel):
+    """Body of POST /auth/password/forgot."""
+
+    email: EmailStr
+
+
+class TokenRequest(BaseModel):
+    """Body of POST /auth/verify: the token from the link in the email."""
+
+    token: str = Field(..., min_length=10, max_length=200)
+
+
+class PasswordReset(BaseModel):
+    """Body of POST /auth/password/reset."""
+
+    token: str = Field(..., min_length=10, max_length=200)
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 class Token(BaseModel):
