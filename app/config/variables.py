@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     lemonsqueezy_variant_pro: str | None = None
     lemonsqueezy_checkout_starter_url: str | None = None
     lemonsqueezy_checkout_pro_url: str | None = None
+    # API key (Settings > API) used only to cancel / resume a subscription from our UI.
+    # Optional: without it the dashboard links to the provider's customer portal instead
+    lemonsqueezy_api_key: str | None = None
 
     # Fernet key that encrypts the login credentials a user gives for one job (WTA-29).
     # Optional: without it, jobs with a login are refused. Generate with

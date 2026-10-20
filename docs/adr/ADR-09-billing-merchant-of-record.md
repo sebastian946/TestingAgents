@@ -45,7 +45,10 @@ The company is in Colombia and sells globally. That shapes the payment choice:
   allowance, `402 Payment Required` with the numbers so the dashboard can offer the
   upgrade. The hourly cap (ADR-07) stays as abuse protection.
 - **Managing the subscription** (invoices, card, cancellation) happens at the provider's
-  customer portal, linked from the dashboard. Deleting an account removes our row but does
+  customer portal, linked from the dashboard; cancelling and resuming are also one click
+  in our Plan page through the provider's API (WTA-34), because a cancel hidden behind a
+  third-party portal reads as a dark pattern. Refunds stay manual (dashboard, 14-day
+  policy in the terms): a self-service refund button invites abuse. Deleting an account removes our row but does
   not cancel the subscription: the product tells the user to cancel first.
 
 ## Consequences

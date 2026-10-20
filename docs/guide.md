@@ -428,7 +428,11 @@ allowance, the provider's status, and the hosted checkout links (with the user's
 id prefilled). `POST /jobs` answers `402` with `{message, plan, used, limit}` past the
 allowance. Payments go through Lemon Squeezy (a Merchant of Record, [ADR-09](adr/ADR-09-billing-merchant-of-record.md)):
 `POST /billing/webhook/lemonsqueezy` verifies the `X-Signature` HMAC on the raw body and
-upserts the user's `subscriptions` row (`services/billing.py`). Statuses `active`,
+upserts the user's `subscriptions` row (`services/billing.py`). `POST /billing/cancel` and
+`POST /billing/resume` call the provider's API (`LEMONSQUEEZY_API_KEY`; DELETE cancels at the
+period end, PATCH `cancelled: false` resumes) and store the returned subscription at once;
+the webhook for the same change arrives later and is idempotent. `BillingInfo.can_cancel` /
+`can_resume` tell the dashboard which button to show. Statuses `active`,
 `on_trial` and `past_due` keep the plan; `cancelled` keeps it until `current_period_end`;
 anything else falls back to `DEFAULT_PLAN`. Tests: `tests/test_billing_and_retention.py`.
 

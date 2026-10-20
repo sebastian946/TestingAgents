@@ -13,8 +13,7 @@ from services import billing
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 
-@router.get("/me", response_model=BillingInfo, summary="The caller's plan, this month's usage and the upgrade links")
-def my_billing(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def _info(db: Session, user: User) -> BillingInfo:
     usage = billing.usage_for(db, user)
     return BillingInfo(
         plan=PlanRead.model_validate(usage.plan),
@@ -25,6 +24,8 @@ def my_billing(user: User = Depends(get_current_user), db: Session = Depends(get
         status=usage.status,
         current_period_end=usage.current_period_end,
         customer_portal_url=usage.customer_portal_url,
+        can_cancel=usage.can_cancel,
+        can_resume=usage.can_resume,
         plans=[PlanRead.model_validate(p) for p in PLANS.values()],
         checkout_urls={
             code: url for code, url in {
@@ -33,6 +34,29 @@ def my_billing(user: User = Depends(get_current_user), db: Session = Depends(get
             }.items() if url
         },
     )
+
+
+@router.get("/me", response_model=BillingInfo, summary="The caller's plan, this month's usage and the upgrade links")
+def my_billing(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _info(db, user)
+
+
+@router.post("/cancel", response_model=BillingInfo, summary="Cancel the subscription at the end of the paid period")
+def cancel_plan(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        billing.cancel_subscription(db, user)
+    except billing.BillingError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    return _info(db, user)
+
+
+@router.post("/resume", response_model=BillingInfo, summary="Undo a cancellation before the period ends")
+def resume_plan(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        billing.resume_subscription(db, user)
+    except billing.BillingError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    return _info(db, user)
 
 
 @router.post(

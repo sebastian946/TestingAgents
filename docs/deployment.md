@@ -119,10 +119,17 @@ first with **Test mode** on (toggle in the left sidebar), then again in live mod
    `subscription_cancelled`, `subscription_resumed`, `subscription_expired`,
    `subscription_paused`, `subscription_unpaused`, `subscription_payment_failed`,
    `subscription_payment_recovered`.
-5. **Customer portal and emails**: Settings > General: enable the customer portal
+5. **API key** (optional but recommended): Settings > API > **+**, name `tests-wise-api`,
+   copy the key into `LEMONSQUEEZY_API_KEY`. It lets users cancel or resume from our
+   Plan page (`POST /billing/cancel` / `/resume`); without it they only get the portal link.
+6. **Pro free trial**: in the Pro product's variant, turn on "Subscription has free
+   trial" with 7 days (`Plan.trial_days` in `config/plans.py` must match what the
+   landing promises). The trial needs a card; the webhook reports `on_trial`, which
+   keeps the plan.
+7. **Customer portal and emails**: Settings > General: enable the customer portal
    (cancellation, card update) and the receipt emails; Design: logo and brand color
    `#b8431a`.
-6. Restart the API (`docker compose ... up -d api`) after editing `.env`, open
+8. Restart the API (`docker compose ... up -d api`) after editing `.env`, open
    `/billing`, pick Starter and pay with the test card `4242 4242 4242 4242` (any future
    date, any CVC). The dashboard must show the Starter plan within seconds and
    Settings > Webhooks must list the delivery as 200. "Manage subscription" must open

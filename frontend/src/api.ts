@@ -105,6 +105,7 @@ export interface Plan {
   jobs_per_month: number
   price_usd: number
   test_runs_per_month: number
+  trial_days: number
 }
 
 export interface BillingInfo {
@@ -116,6 +117,8 @@ export interface BillingInfo {
   status: string | null
   current_period_end: string | null
   customer_portal_url: string | null
+  can_cancel: boolean
+  can_resume: boolean
   plans: Plan[]
   checkout_urls: Record<string, string>
 }
@@ -241,6 +244,8 @@ export const api = {
   resetPassword: (token: string, password: string) => request<Token>('POST', '/auth/password/reset', { token, password }),
   deleteAccount: (password: string) => request<void>('DELETE', '/auth/me', { password }),
   billing: () => request<BillingInfo>('GET', '/billing/me'),
+  cancelPlan: () => request<BillingInfo>('POST', '/billing/cancel'),
+  resumePlan: () => request<BillingInfo>('POST', '/billing/resume'),
 
   listJobs: (limit = 50) => request<Job[]>('GET', `/jobs?limit=${limit}`),
   createJob: (payload: JobCreate) => request<Job>('POST', '/jobs', payload),
