@@ -45,7 +45,7 @@ export function AuthForm({ title, subtitle, submitLabel, onSubmit, footer }: Pro
           <Logo to="/" />
         </div>
         <h1 className="card-title">{title}</h1>
-        <p className="muted" style={{ margin: '0 0 var(--space-4)' }}>
+        <p className="muted" style={{ margin: '0 0 var(--space-16)' }}>
           {subtitle}
         </p>
         <form onSubmit={handleSubmit}>
@@ -78,7 +78,7 @@ export function AuthForm({ title, subtitle, submitLabel, onSubmit, footer }: Pro
             )}
           </div>
           {error && (
-            <div style={{ marginTop: 'var(--space-4)' }}>
+            <div style={{ marginTop: 'var(--space-16)' }}>
               <ErrorBox message={error} />
             </div>
           )}
@@ -86,7 +86,7 @@ export function AuthForm({ title, subtitle, submitLabel, onSubmit, footer }: Pro
             {busy ? 'Please wait…' : submitLabel}
           </button>
         </form>
-        <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+        <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-16)' }}>
           {footer.text} <Link to={footer.to}>{footer.linkText}</Link>
         </p>
         {!isLogin && (

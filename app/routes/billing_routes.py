@@ -1,19 +1,19 @@
-"""Billing (WTA-30 / WTA-34, ADR-09): the caller's plan, Stripe Checkout, the Customer
-Portal and the Stripe webhook."""
+"""Billing (WTA-30, ADR-09): what plan the caller is on, and the provider's webhook."""
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from config.plans import PLANS
+from config.variables import settings
 from db.conn import get_db
 from db.models_db.models_db import User
-from models.models import BillingInfo, CheckoutRequest, PlanRead, RedirectUrl
-from security.auth import get_current_user, require_verified_email
+from models.models import BillingInfo, PlanRead
+from security.auth import get_current_user
 from services import billing
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 
-@router.get("/me", response_model=BillingInfo, summary="The caller's plan, this month's usage and whether payments are on")
+@router.get("/me", response_model=BillingInfo, summary="The caller's plan, this month's usage and the upgrade links")
 def my_billing(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     usage = billing.usage_for(db, user)
     return BillingInfo(
@@ -24,49 +24,39 @@ def my_billing(user: User = Depends(get_current_user), db: Session = Depends(get
         runs_remaining=usage.runs_remaining,
         status=usage.status,
         current_period_end=usage.current_period_end,
-        can_manage=usage.can_manage,
-        payments_enabled=billing.configured(),
+        customer_portal_url=usage.customer_portal_url,
         plans=[PlanRead.model_validate(p) for p in PLANS.values()],
+        checkout_urls={
+            code: url for code, url in {
+                "starter": billing.checkout_url(settings.lemonsqueezy_checkout_starter_url, user),
+                "pro": billing.checkout_url(settings.lemonsqueezy_checkout_pro_url, user),
+            }.items() if url
+        },
     )
 
 
-@router.post("/checkout", response_model=RedirectUrl, summary="Start a Stripe Checkout for a paid plan")
-def checkout(payload: CheckoutRequest, user: User = Depends(require_verified_email), db: Session = Depends(get_db)):
-    """Returns the hosted Checkout URL; the dashboard redirects there. Stripe sends the user
-    back to /billing?checkout=success|cancelled, and the webhook records the purchase."""
-    if payload.plan not in PLANS or PLANS[payload.plan].price_usd == 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose a paid plan.")
-    try:
-        return RedirectUrl(url=billing.create_checkout(db, user, payload.plan))
-    except billing.BillingError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
-
-
-@router.post("/portal", response_model=RedirectUrl, summary="Open the Stripe Customer Portal (invoices, card, cancel)")
-def portal(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    try:
-        return RedirectUrl(url=billing.create_portal(db, user))
-    except billing.BillingError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
-
-
 @router.post(
-    "/webhook/stripe",
+    "/webhook/lemonsqueezy",
     status_code=status.HTTP_200_OK,
-    include_in_schema=False,  # called by Stripe, not by users
+    include_in_schema=False,  # called by the provider, not by users
 )
-async def stripe_webhook(
-    request: Request, db: Session = Depends(get_db), stripe_signature: str | None = Header(default=None),
+async def lemonsqueezy_webhook(
+    request: Request, db: Session = Depends(get_db), x_signature: str | None = Header(default=None),
 ):
-    """Stripe's events. The signature is checked on the raw body before anything is parsed;
-    an invalid one is a 400 and nothing is stored. A 2xx tells Stripe not to retry, so
-    ignored events answer 200 too."""
+    """The provider's events. The signature is checked on the raw body before anything is
+    parsed; an invalid one is a 400 and nothing is stored. A 2xx tells the provider not to
+    retry, so ignored events answer 200 too."""
     if not billing.configured():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Billing is not configured.")
     raw = await request.body()
+    if not billing.verify_signature(raw, x_signature):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook signature.")
     try:
-        event = billing.construct_event(raw, stripe_signature)
-        outcome = billing.apply_event(db, event)
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Body is not JSON.")
+    try:
+        outcome = billing.apply_webhook(db, payload)
     except billing.WebhookError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     print(f"[billing] {outcome}", flush=True)

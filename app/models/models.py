@@ -62,17 +62,9 @@ class BillingInfo(BaseModel):
     runs_remaining: int = 0
     status: str | None = Field(None, description="The provider's subscription status, if any")
     current_period_end: datetime | None = None
-    can_manage: bool = Field(False, description="A Stripe customer exists: POST /billing/portal opens the portal")
-    payments_enabled: bool = Field(False, description="Stripe is configured on this server")
+    customer_portal_url: str | None = Field(None, description="Where the user manages or cancels the subscription")
     plans: list[PlanRead]
-
-
-class CheckoutRequest(BaseModel):
-    plan: str = Field(..., pattern="^[a-z]+$")
-
-
-class RedirectUrl(BaseModel):
-    url: str
+    checkout_urls: dict[str, str] = Field(description="Hosted checkout per plan code, when billing is configured")
 
 
 class EmailRequest(BaseModel):

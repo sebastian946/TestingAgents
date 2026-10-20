@@ -60,7 +60,7 @@ export function ResetPasswordPage() {
               <input id="confirm" type="password" required minLength={8} autoComplete="new-password" className="input" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
             </div>
             {error && (
-              <div style={{ marginTop: 'var(--space-4)' }}>
+              <div style={{ marginTop: 'var(--space-16)' }}>
                 <ErrorBox message={error} />
               </div>
             )}
@@ -69,7 +69,7 @@ export function ResetPasswordPage() {
             </button>
           </form>
         )}
-        <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+        <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-16)' }}>
           <Link to="/login">Back to log in</Link>
         </p>
       </div>

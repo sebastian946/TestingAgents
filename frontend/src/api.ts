@@ -115,9 +115,9 @@ export interface BillingInfo {
   runs_remaining: number
   status: string | null
   current_period_end: string | null
-  can_manage: boolean
-  payments_enabled: boolean
+  customer_portal_url: string | null
   plans: Plan[]
+  checkout_urls: Record<string, string>
 }
 
 export type RunStatus = 'queued' | 'running' | 'done' | 'failed'
@@ -241,8 +241,6 @@ export const api = {
   resetPassword: (token: string, password: string) => request<Token>('POST', '/auth/password/reset', { token, password }),
   deleteAccount: (password: string) => request<void>('DELETE', '/auth/me', { password }),
   billing: () => request<BillingInfo>('GET', '/billing/me'),
-  checkout: (plan: string) => request<{ url: string }>('POST', '/billing/checkout', { plan }),
-  portal: () => request<{ url: string }>('POST', '/billing/portal'),
 
   listJobs: (limit = 50) => request<Job[]>('GET', `/jobs?limit=${limit}`),
   createJob: (payload: JobCreate) => request<Job>('POST', '/jobs', payload),
