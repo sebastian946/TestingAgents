@@ -60,6 +60,11 @@ REPORT_TEXTS: dict[str, dict] = {
             "accessibility": "Labels, keyboard use and focus.",
         },
         "values": {},  # English shows the codes as they are
+        "sheet_results": "Results",
+        "results_title": "Automated test run",
+        "results_subtitle": "What the Executor observed when it ran each scenario in a browser (UTC).",
+        "results_columns": ["ID", "Title", "Outcome", "What was observed"],
+        "outcomes": {"pass": "Pass", "fail": "Fail", "blocked": "Blocked", "not_run": "Not run"},
     },
     "es": {
         "sheet_summary": "Resumen",
@@ -114,6 +119,11 @@ REPORT_TEXTS: dict[str, dict] = {
             "usability": "Claridad de mensajes, etiquetas y flujo.",
             "accessibility": "Etiquetas, uso con teclado y foco.",
         },
+        "sheet_results": "Resultados",
+        "results_title": "Ejecución automática",
+        "results_subtitle": "Lo que el Ejecutor observó al correr cada escenario en un navegador (UTC).",
+        "results_columns": ["ID", "Título", "Resultado", "Qué se observó"],
+        "outcomes": {"pass": "Pasó", "fail": "Falló", "blocked": "Bloqueado", "not_run": "Sin ejecutar"},
         "values": {
             # priorities
             "critical": "crítica", "high": "alta", "medium": "media", "low": "baja",

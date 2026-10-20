@@ -25,6 +25,13 @@ def enqueue_continuation(job_id: uuid.UUID) -> None:
     print(f"Enqueued the continuation of job {job_id}.")
 
 
+def enqueue_test_run(run_id: int) -> None:
+    """WTA-33: execute a job's scenarios in the browser (its own, longer timeout)."""
+    options = {**enqueue_options(), "job_timeout": settings.run_timeout_seconds}
+    job_queue.enqueue("worker.tasks.run_tests_task", run_id, **options)
+    print(f"Enqueued test run {run_id}.")
+
+
 def add_new_job_to_queue(job_id: uuid.UUID) -> None:
     """Add a new job to the Redis queue."""
     # Task referenced by its import path: the API does not need to import the worker code

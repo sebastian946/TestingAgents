@@ -8,6 +8,7 @@ from observability import init_sentry
 from routes.auth_routes import router as auth_router
 from routes.billing_routes import router as billing_router
 from routes.routes import router
+from routes.run_routes import router as run_router
 from security.auth import MIN_SECRET_LENGTH
 
 init_sentry("api")
@@ -26,6 +27,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(billing_router)
 app.include_router(router)
+app.include_router(run_router)
 
 if not settings.auth_secret_key:
     raise RuntimeError(

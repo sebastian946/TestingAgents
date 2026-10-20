@@ -125,6 +125,7 @@ class Job(Base):
     pages: Mapped[list["Page"]] = relationship(back_populates="job", cascade="all, delete-orphan")
     scenarios: Mapped[list["Scenario"]] = relationship(back_populates="job", cascade="all, delete-orphan")
     llm_calls: Mapped[list["LlmCall"]] = relationship(back_populates="job", cascade="all, delete-orphan")
+    runs: Mapped[list["TestRun"]] = relationship(back_populates="job", cascade="all, delete-orphan")
 
 
 class Page(Base):
@@ -162,6 +163,57 @@ class Scenario(Base):
 
     job: Mapped["Job"] = relationship(back_populates="scenarios")
     page: Mapped["Page"] = relationship(back_populates="scenarios")
+
+
+class RunStatus(str, enum.Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class TestRun(Base):
+    """One execution of a job's scenarios by the Executor (WTA-33). Counters grow as each
+    scenario finishes (one commit per scenario, like pages), so the dashboard shows progress."""
+
+    __tablename__ = "test_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("job.id", ondelete="CASCADE"), index=True)
+    status: Mapped[RunStatus] = mapped_column(
+        Enum(RunStatus, name="run_status", values_callable=lambda e: [m.value for m in e]), default=RunStatus.QUEUED,
+    )
+    total: Mapped[int] = mapped_column(default=0)
+    passed: Mapped[int] = mapped_column(default=0)
+    failed: Mapped[int] = mapped_column(default=0)
+    blocked: Mapped[int] = mapped_column(default=0)
+    error: Mapped[str | None] = mapped_column(Text)
+    # Same handling as job.login_credentials (WTA-29): encrypted, cleared when the run ends
+    login_credentials: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    job: Mapped["Job"] = relationship(back_populates="runs")
+    results: Mapped[list["ScenarioResult"]] = relationship(back_populates="run", cascade="all, delete-orphan")
+
+
+class ScenarioResult(Base):
+    """The Executor's verdict on one scenario in one run (WTA-33)."""
+
+    __tablename__ = "scenario_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), index=True)
+    scenario_id: Mapped[int] = mapped_column(ForeignKey("scenarios.id", ondelete="CASCADE"), index=True)
+    outcome: Mapped[str] = mapped_column(String(20))  # pass | fail | blocked
+    reason: Mapped[str] = mapped_column(Text)
+    steps: Mapped[list[Any]] = mapped_column(JSONType, default=list)  # the tool calls, for the record
+    screenshot_path: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    run: Mapped["TestRun"] = relationship(back_populates="results")
+    scenario: Mapped["Scenario"] = relationship()
 
 
 class LlmCall(Base):

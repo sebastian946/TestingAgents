@@ -6,7 +6,7 @@ import { ErrorBox, formatDate } from '../components/ui'
 const PLAN_FEATURES: Record<string, string[]> = {
   free: ['Up to 8 pages per job', 'Excel report', 'English and Spanish scenarios'],
   starter: ['Up to 8 pages per job', 'Sites behind a login', 'English and Spanish scenarios'],
-  pro: ['Everything in Starter', 'Priority support', 'For agencies and teams'],
+  pro: ['Everything in Starter', '10 automated test runs per month', 'Priority support'],
 }
 
 export function BillingPage() {
@@ -61,6 +61,14 @@ export function BillingPage() {
         <div className={`progress${percent >= 100 ? ' is-full' : ''}`}>
           <span style={{ width: `${percent}%` }} />
         </div>
+        {info.plan.test_runs_per_month > 0 && (
+          <p className="muted" style={{ margin: 'var(--space-3) 0 0' }}>
+            <b style={{ color: 'var(--ink)' }}>
+              {info.runs_this_month} of {info.plan.test_runs_per_month}
+            </b>{' '}
+            automated test runs used this month
+          </p>
+        )}
       </div>
 
       <div style={{ display: 'grid', gap: 'var(--space-4)', gridTemplateColumns: 'repeat(auto-fit, minmax(14rem, 1fr))', marginTop: 'var(--space-8)' }}>

@@ -50,11 +50,20 @@ class Settings(BaseSettings):
     # more than the 8 of a direct job)
     discovery_max_pages: int = 20
 
+    # Executor (WTA-33, ADR-10): the model that runs scenarios in the browser (Sonnet: cheap
+    # enough for 5-20 calls per scenario), its effort, and the caps per scenario and per run
+    executor_model: str = "claude-sonnet-5-5"
+    executor_effort: str = "medium"
+    executor_max_steps: int = 20
+    executor_scenario_timeout: float = 120.0  # seconds
+    executor_max_scenarios: int = 25  # per run; the rest are left as not run
+
     # Reliability (WTA-8): a job that raises is re-enqueued up to this many times (the crawl
     # restarts from scratch, mark_job_running wipes the previous attempt), and no single
     # attempt may run longer than the timeout (RQ kills it and it counts as a failure)
     job_max_retries: int = 1
     job_timeout_seconds: int = 15 * 60
+    run_timeout_seconds: int = 60 * 60  # a test run: up to 25 scenarios x 2 min
     # Abuse protection (WTA-30): rate limits on login/register/reset (security/ratelimit.py)
     # and the leaked-password check against Have I Been Pwned (security/passwords.py)
     rate_limit_enabled: bool = True

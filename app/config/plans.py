@@ -14,12 +14,14 @@ class Plan:
     name: str
     jobs_per_month: int
     price_usd: int  # per month; 0 = free
+    # WTA-33: automated test runs (the Executor) included per month; 0 = not available
+    test_runs_per_month: int = 0
 
 
 PLANS: dict[str, Plan] = {
     "free": Plan("free", "Free", jobs_per_month=3, price_usd=0),
     "starter": Plan("starter", "Starter", jobs_per_month=10, price_usd=19),
-    "pro": Plan("pro", "Pro", jobs_per_month=40, price_usd=49),
+    "pro": Plan("pro", "Pro", jobs_per_month=40, price_usd=49, test_runs_per_month=10),
 }
 
 FREE = PLANS["free"]

@@ -20,6 +20,8 @@ def my_billing(user: User = Depends(get_current_user), db: Session = Depends(get
         plan=PlanRead.model_validate(usage.plan),
         used_this_month=usage.used_this_month,
         remaining=usage.remaining,
+        runs_this_month=usage.runs_this_month,
+        runs_remaining=usage.runs_remaining,
         status=usage.status,
         current_period_end=usage.current_period_end,
         customer_portal_url=usage.customer_portal_url,

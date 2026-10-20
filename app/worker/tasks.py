@@ -9,6 +9,7 @@ import uuid
 from rq import get_current_job
 
 from agents import graph
+from worker.run_tests import run_tests
 from config.variables import TRACING_ENABLED, settings
 from db import db_crud
 from db.conn import local_session
@@ -104,6 +105,21 @@ def continue_job_task(job_id: str) -> None:
         }
     print(f"Continuing job {job_id} with {len(initial_state['pages'])} selected pages")
     _run(graph.continuation_graph, job_id, job_uuid, initial_state)
+
+
+def run_tests_task(run_id: int) -> None:
+    """WTA-33: execute a job's scenarios in the browser; enqueued by POST /jobs/{id}/runs."""
+    try:
+        summary = run_tests(run_id)
+    except Exception as e:
+        with local_session() as db:
+            db_crud.finish_run(db, run_id, error=_failure_reason(e))
+        print(f"Error in test run {run_id}: {e}")
+        raise
+    finally:
+        _flush_traces()
+    print(f"Test run {run_id} {summary['status']}: {summary.get('passed', 0)} passed, "
+          f"{summary.get('failed', 0)} failed, {summary.get('blocked', 0)} blocked.")
 
 
 def _run(compiled_graph, job_id: str, job_uuid: uuid.UUID, initial_state: dict) -> None:

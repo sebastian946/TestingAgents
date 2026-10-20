@@ -261,6 +261,7 @@ curl -OJ -H "Authorization: Bearer $TOKEN" http://localhost:8000/jobs/77ac7e6a-6
 | `GET /jobs/{id}/usage` | LLM calls, tokens and estimated cost of the job |
 | `GET /billing/me` | Plan, jobs used this month, upgrade links |
 | `POST /jobs/{id}/pages/select` | For a job created with `select_pages: true`: the pages that get scenarios; resumes the job |
+| `POST /jobs/{id}/runs`, `GET /jobs/{id}/runs/{run_id}` | Pro: an AI agent executes the scenarios in a browser; verdicts with reasons and screenshots |
 | `DELETE /auth/me` | Deletes the account with everything it owns (password confirmation) |
 | `DELETE /jobs/{id}` | Deletes the job, its pages and scenarios |
 | `GET /Health` | Health check (public) |
@@ -281,6 +282,7 @@ Each decision is a short ADR (context → decision → consequence) in [docs/adr
 | [06](docs/adr/ADR-06-llm-cost-ledger.md) | **One `llm_calls` row per billed call** | Retries, refusals and fallbacks are billed too. With a ledger, the cost of a job is a `SUM`, and the price of the SaaS can be based on real numbers. |
 | [07](docs/adr/ADR-07-jwt-auth-and-job-ownership.md) | **Email + password accounts, JWT tokens, jobs owned per user** | Every job costs money, so the API cannot be open. Stateless tokens keep the API horizontal; an hourly job limit caps the damage of a leaked token. |
 | [09](docs/adr/ADR-09-billing-merchant-of-record.md) | **Billing through a Merchant of Record (Lemon Squeezy); plans are monthly job allowances** | Selling globally from Colombia: the provider is the legal seller and handles taxes and invoices. Our side is one `subscriptions` row per user written by signed webhooks, and a `402` at `POST /jobs` past the allowance. |
+| [10](docs/adr/ADR-10-executor-agent.md) | **The Executor runs scenarios in a real browser with tools, not an MCP server** | Running the tests needs judgement, so a model drives Playwright through six tools on the worker's own browser. Guardrails live in the tools (same host, no paying/deleting, step and time caps); test environments only; Pro plan, 10 runs/month, Sonnet. |
 | [08](docs/adr/ADR-08-authenticated-crawls.md) | **Sites behind a login: credentials per job, encrypted, deleted after the crawl** | Most products live behind a login. The secret lives minutes, never reaches the state, the logs or the LLM; the crawler skips action links while logged in; the customer uses a test account and confirms authorization. |
 
 ## Deployment
@@ -312,6 +314,7 @@ flow, from `POST /jobs` to the downloaded Excel file. Details in the
 
 **Product**
 - **Dashboard** (done, `frontend/`): next, scenario editing, re-running a job and sharing a report by link.
+- **Executor v2**: verdict review by a second model, retries of flaky steps, scenarios about payments on sandbox accounts.
 - **Testing RAG**: a knowledge base of testing practices and of earlier scenarios, retrieved by
   page type, so the Designer writes better and more consistent scenarios.
 - **MCP server**: expose "test this site" as tools, so Claude, an IDE or another agent can start a

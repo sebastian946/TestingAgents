@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
-import { api, ApiError, type Job, type Page, type Scenario, type Usage } from '../api'
+import { api, ApiError, type BillingInfo, type Job, type Page, type Scenario, type Usage } from '../api'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { RunPanel } from '../components/RunPanel'
 import { ErrorBox, LANGUAGE_NAMES, Notice, PriorityBadge, StatusBadge, duration, formatDate, hostOf } from '../components/ui'
 
 const REFRESH_MS = 3000
@@ -26,6 +27,7 @@ export function JobDetailPage() {
   const [picked, setPicked] = useState<Set<number> | null>(null)
   const [submittingSelection, setSubmittingSelection] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+  const [billing, setBilling] = useState<BillingInfo | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -52,6 +54,10 @@ export function JobDetailPage() {
       window.clearTimeout(timer)
     }
   }, [id, reloadKey])
+
+  useEffect(() => {
+    api.billing().then(setBilling).catch(() => setBilling(null))
+  }, [])
 
   async function submitSelection() {
     if (!picked || picked.size === 0) return
@@ -301,6 +307,8 @@ export function JobDetailPage() {
           </div>
         )}
       </section>
+
+      {job.status === 'done' && scenarios.length > 0 && <RunPanel job={job} scenarios={scenarios} billing={billing} />}
 
       <ConfirmDialog open={confirmDelete} title="Delete this job?" confirmLabel="Delete job" busy={deleting} onConfirm={remove} onCancel={() => setConfirmDelete(false)}>
         The report for <b style={{ color: 'var(--ink)' }}>{hostOf(job.url)}</b> and its {job.total_scenarios} scenarios will be removed. This cannot be

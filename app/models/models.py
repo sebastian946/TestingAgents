@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from config.languages import DEFAULT_LANGUAGE, Language
-from db.models_db.models_db import JobStatus
+from db.models_db.models_db import JobStatus, RunStatus
 
 
 # ------------------------------------------------------------------ auth (WTA-26)
@@ -49,6 +49,7 @@ class PlanRead(BaseModel):
     name: str
     jobs_per_month: int
     price_usd: int
+    test_runs_per_month: int = 0
 
 
 class BillingInfo(BaseModel):
@@ -57,6 +58,8 @@ class BillingInfo(BaseModel):
     plan: PlanRead
     used_this_month: int
     remaining: int
+    runs_this_month: int = 0
+    runs_remaining: int = 0
     status: str | None = Field(None, description="The provider's subscription status, if any")
     current_period_end: datetime | None = None
     customer_portal_url: str | None = Field(None, description="Where the user manages or cancels the subscription")
@@ -113,6 +116,51 @@ class JobCreate(BaseModel):
     select_pages: bool = Field(
         False, description="Explore first (up to 20 pages), then wait for you to choose which pages get scenarios",
     )
+
+
+class RunCreate(BaseModel):
+    """Body of POST /jobs/{id}/runs (WTA-33): the Executor acts on the site, so the user
+    confirms it is a test environment; credentials are optional and used once."""
+
+    test_environment: bool = Field(..., description="Must be true: the site is a test environment, not production")
+    login: JobLogin | None = None
+
+
+class ScenarioResultRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scenario_id: int
+    outcome: str
+    reason: str
+    steps: list[Any] = []
+    has_screenshot: bool = False
+    created_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _flag_screenshot(cls, data):
+        if hasattr(data, "screenshot_path"):
+            return {"id": data.id, "scenario_id": data.scenario_id, "outcome": data.outcome, "reason": data.reason,
+                    "steps": list(data.steps or []), "has_screenshot": bool(data.screenshot_path), "created_at": data.created_at}
+        return data
+
+
+class RunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_id: uuid.UUID
+    status: RunStatus
+    total: int
+    passed: int
+    failed: int
+    blocked: int
+    error: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    results: list[ScenarioResultRead] = []
 
 
 class PageSelection(BaseModel):

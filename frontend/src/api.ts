@@ -104,17 +104,52 @@ export interface Plan {
   name: string
   jobs_per_month: number
   price_usd: number
+  test_runs_per_month: number
 }
 
 export interface BillingInfo {
   plan: Plan
   used_this_month: number
   remaining: number
+  runs_this_month: number
+  runs_remaining: number
   status: string | null
   current_period_end: string | null
   customer_portal_url: string | null
   plans: Plan[]
   checkout_urls: Record<string, string>
+}
+
+export type RunStatus = 'queued' | 'running' | 'done' | 'failed'
+
+export interface ScenarioResult {
+  id: number
+  scenario_id: number
+  outcome: 'pass' | 'fail' | 'blocked' | string
+  reason: string
+  steps: unknown[]
+  has_screenshot: boolean
+  created_at: string
+}
+
+export interface Run {
+  id: number
+  job_id: string
+  status: RunStatus
+  total: number
+  passed: number
+  failed: number
+  blocked: number
+  error: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  results: ScenarioResult[]
+}
+
+export interface RunCreate {
+  test_environment: boolean
+  login?: JobLogin
 }
 
 export interface JobLogin {
@@ -215,6 +250,18 @@ export const api = {
   getUsage: (id: string) => request<Usage>('GET', `/jobs/${id}/usage`),
   deleteJob: (id: string) => request<void>('DELETE', `/jobs/${id}`),
   selectPages: (id: string, pageIds: number[]) => request<Job>('POST', `/jobs/${id}/pages/select`, { page_ids: pageIds }),
+  listRuns: (id: string) => request<Run[]>('GET', `/jobs/${id}/runs`),
+  getRun: (id: string, runId: number) => request<Run>('GET', `/jobs/${id}/runs/${runId}`),
+  startRun: (id: string, payload: RunCreate) => request<Run>('POST', `/jobs/${id}/runs`, payload),
+  /** The screenshot needs the bearer header: fetch it and return an object URL */
+  async resultScreenshot(id: string, runId: number, resultId: number): Promise<string> {
+    const token = getToken()
+    const response = await fetch(`${API_URL}/jobs/${id}/runs/${runId}/results/${resultId}/screenshot`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!response.ok) throw new ApiError(response.status, 'Screenshot not available.')
+    return URL.createObjectURL(await response.blob())
+  },
 
   /** The report needs the bearer header, so a plain link cannot download it: fetch the bytes
    *  and hand the browser a blob with the server's file name. */

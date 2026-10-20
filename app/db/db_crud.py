@@ -6,7 +6,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from db.models_db.models_db import EmailToken, Job, JobStatus, LlmCall, Page, Scenario, Subscription, User
+from db.models_db.models_db import (
+    EmailToken, Job, JobStatus, LlmCall, Page, RunStatus, Scenario, ScenarioResult, Subscription, TestRun, User,
+)
 
 
 def _now() -> datetime:
@@ -124,6 +126,83 @@ def upsert_subscription(db: Session, user_id: uuid.UUID, **fields) -> Subscripti
     db.commit()
     db.refresh(subscription)
     return subscription
+
+
+# ------------------------------------------------------------- Test runs (WTA-33)
+
+def create_run(db: Session, job_id: uuid.UUID, login_credentials: str | None = None) -> TestRun:
+    run = TestRun(job_id=job_id, status=RunStatus.QUEUED, login_credentials=login_credentials)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def get_run(db: Session, run_id: int) -> TestRun | None:
+    return db.get(TestRun, run_id)
+
+
+def get_runs_by_job(db: Session, job_id: uuid.UUID) -> list[TestRun]:
+    stmt = select(TestRun).where(TestRun.job_id == job_id).order_by(TestRun.id.desc())
+    return list(db.scalars(stmt))
+
+
+def get_latest_done_run(db: Session, job_id: uuid.UUID) -> TestRun | None:
+    stmt = (select(TestRun).where(TestRun.job_id == job_id, TestRun.status == RunStatus.DONE)
+            .order_by(TestRun.id.desc()).limit(1))
+    return db.scalars(stmt).first()
+
+
+def count_runs_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:
+    """Runs a user started at or after `since` (the per-month allowance of the plan)."""
+    stmt = (select(func.count()).select_from(TestRun).join(Job, Job.id == TestRun.job_id)
+            .where(Job.user_id == user_id, TestRun.created_at >= since))
+    return db.scalar(stmt) or 0
+
+
+def mark_run_running(db: Session, run_id: int, total: int) -> TestRun | None:
+    run = db.get(TestRun, run_id)
+    if run is None:
+        return None
+    db.execute(delete(ScenarioResult).where(ScenarioResult.run_id == run_id))  # a retry starts clean
+    run.status, run.started_at, run.total = RunStatus.RUNNING, _now(), total
+    run.passed = run.failed = run.blocked = 0
+    run.error = None
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def add_scenario_result(
+    db: Session, run_id: int, scenario_id: int, outcome: str, reason: str, steps: list, screenshot_path: str | None,
+) -> ScenarioResult:
+    """One commit per scenario: the row and the run's counter move together (live progress)."""
+    row = ScenarioResult(run_id=run_id, scenario_id=scenario_id, outcome=outcome, reason=reason, steps=steps,
+                         screenshot_path=screenshot_path)
+    db.add(row)
+    column = {"pass": TestRun.passed, "fail": TestRun.failed}.get(outcome, TestRun.blocked)
+    db.execute(update(TestRun).where(TestRun.id == run_id).values({column.key: column + 1}))
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def finish_run(db: Session, run_id: int, error: str | None = None) -> TestRun | None:
+    run = db.get(TestRun, run_id)
+    if run is None:
+        return None
+    run.status = RunStatus.FAILED if error else RunStatus.DONE
+    run.error = error[:2000] if error else None
+    run.finished_at = _now()
+    run.login_credentials = None
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def get_results_by_run(db: Session, run_id: int) -> list[ScenarioResult]:
+    stmt = select(ScenarioResult).where(ScenarioResult.run_id == run_id).order_by(ScenarioResult.id)
+    return list(db.scalars(stmt))
 
 
 def count_jobs_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:
