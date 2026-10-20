@@ -22,6 +22,7 @@ URL = "https://shop.example/"
 # What each node may write (agents/state.py). Checked on every update the graph emits.
 OWNED_KEYS = {
     "explorer": {"pages", "login_note"},
+    "pause": {"status"},
     "designer": {"scenarios_designed", "pages_without_scenarios"},
     "documenter": {"report_path", "status", "error"},
     "fail": {"status", "error"},
@@ -63,10 +64,10 @@ def _initial(job_id, description=None):
 
 def test_the_graph_has_the_designed_shape():
     drawn = graph.testing_graph.get_graph()
-    assert set(drawn.nodes) == {"__start__", "explorer", "designer", "documenter", "fail", "__end__"}
+    assert set(drawn.nodes) == {"__start__", "explorer", "designer", "documenter", "pause", "fail", "__end__"}
     edges = {(e.source, e.target, e.conditional) for e in drawn.edges}
     assert ("__start__", "explorer", False) in edges
-    assert {("explorer", "designer", True), ("explorer", "fail", True)} <= edges  # conditional edge 1
+    assert {("explorer", "designer", True), ("explorer", "pause", True), ("explorer", "fail", True)} <= edges  # edge 1
     assert {("designer", "documenter", True), ("designer", "fail", True)} <= edges  # conditional edge 2
     assert {("documenter", "__end__", False), ("fail", "__end__", False)} <= edges
 

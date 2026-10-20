@@ -40,6 +40,8 @@ description the user gave of the app.
 
 - Exploring costs the same on every run, and the same site gives the same pages. That is
   reproducible, and it can be tested with a local site.
+- The user can also explore first and choose the pages (WTA-32): a wider crawl costs time,
+  not tokens, and the LLM is only spent on the pages they keep.
 - Pages reachable only through interactions are missed (multi-step wizards). Content behind
   a login is covered since ADR-08, with a deterministic sign-in and per-job credentials.
 - An LLM-guided exploration remains possible later as a premium mode. It would reuse the

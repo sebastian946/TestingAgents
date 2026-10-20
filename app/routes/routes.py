@@ -12,8 +12,8 @@ from config.variables import settings
 from db import db_crud
 from db.conn import get_db
 from db.models_db.models_db import Job, JobStatus, User
-from db.redis.redis_conn import add_new_job_to_queue
-from models.models import JobCreate, JobRead, JobUsage, PageRead, ScenarioRead
+from db.redis.redis_conn import add_new_job_to_queue, enqueue_continuation
+from models.models import JobCreate, JobRead, JobUsage, PageRead, PageSelection, ScenarioRead
 from security import credentials
 from services import billing, cleanup
 from security.auth import get_current_user, require_verified_email
@@ -94,7 +94,7 @@ def create_job(payload: JobCreate, user: User = Depends(require_verified_email),
 
     job = db_crud.create_job(
         db, url=url, description=payload.description, language=payload.language, user_id=user.id,
-        login_url=login_url, login_credentials=encrypted,
+        login_url=login_url, login_credentials=encrypted, select_pages=payload.select_pages,
     )
     try:
         add_new_job_to_queue(job.id)
@@ -133,6 +133,41 @@ def get_job(job: Job = Depends(owned_job)):
 )
 def get_job_pages(job: Job = Depends(owned_job), db: Session = Depends(get_db)):
     return db_crud.get_pages_by_job(db, job.id)
+
+
+@router.post(
+    "/{job_id}/pages/select",
+    response_model=JobRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Choose the pages that get scenarios and resume the job",
+    responses={409: {"description": "The job is not waiting for a selection"}, 400: {"description": "Unknown page ids"}},
+)
+def select_job_pages(payload: PageSelection, job: Job = Depends(owned_job), db: Session = Depends(get_db)):
+    """WTA-32: only for a job in `awaiting_selection`. The chosen pages are designed, the
+    rest are kept in the job but get no scenarios. Answers 202 like POST /jobs: the worker
+    continues, poll GET /jobs/{id}."""
+    if job.status is not JobStatus.AWAITING_SELECTION:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"The job is {job.status.value}, not waiting for a page selection.",
+        )
+    known = {p.id for p in db_crud.get_pages_by_job(db, job.id)}
+    unknown = sorted(set(payload.page_ids) - known)
+    if unknown:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown page ids: {unknown}")
+    db_crud.select_pages(db, job.id, payload.page_ids)
+    job.status = JobStatus.QUEUED
+    db.commit()
+    try:
+        enqueue_continuation(job.id)
+    except RedisError:
+        db_crud.mark_job_awaiting_selection(db, job.id)  # back to waiting: the user can retry
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The job queue is unavailable, try again later.",
+        )
+    db.refresh(job)
+    return job
 
 
 @router.get(
@@ -180,6 +215,15 @@ def download_report(job: Job = Depends(owned_job), db: Session = Depends(get_db)
     gets a report, so its 409 says why. `detail.status` lets clients branch on the case.
     """
     job_id = job.id
+    if job.status is JobStatus.AWAITING_SELECTION:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "status": job.status.value,
+                "message": f"The job is waiting for you to choose which of its {job.pages_crawled} pages get scenarios "
+                           f"(POST /jobs/{job_id}/pages/select).",
+            },
+        )
     if job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

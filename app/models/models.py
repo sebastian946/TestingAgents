@@ -110,6 +110,15 @@ class JobCreate(BaseModel):
         DEFAULT_LANGUAGE, description="Language of the scenarios and the report: 'en' (English) or 'es' (Spanish)"
     )
     login: JobLogin | None = Field(None, description="Optional: log in before exploring")
+    select_pages: bool = Field(
+        False, description="Explore first (up to 20 pages), then wait for you to choose which pages get scenarios",
+    )
+
+
+class PageSelection(BaseModel):
+    """Body of POST /jobs/{id}/pages/select (WTA-32)."""
+
+    page_ids: list[int] = Field(..., min_length=1, max_length=200)
 
 
 class JobRead(BaseModel):
@@ -120,6 +129,7 @@ class JobRead(BaseModel):
     language: Language = DEFAULT_LANGUAGE
     url: str
     login_url: str | None = Field(None, description="Set when the job explored the site logged in (credentials are never returned)")
+    select_pages: bool = False
     status: JobStatus
     pages_crawled: int
     total_scenarios: int
@@ -140,6 +150,7 @@ class PageRead(BaseModel):
     page_type: str | None = None
     screenshot_path: str | None = None
     elements: dict[str, Any] | None = None
+    selected: bool = True
     created_at: datetime
 
 

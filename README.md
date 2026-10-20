@@ -193,6 +193,8 @@ the explorer signs in first (use a **test account** on a **test environment**); 
 used for this job only and deleted when the exploration ends. The response only echoes `login_url`.
 Each account may create `AUTH_MAX_JOBS_PER_HOUR` jobs per hour (default 20): past that, `429`. Past the
 plan's monthly allowance (`GET /billing/me`), `402` with the numbers.
+With `"select_pages": true` the job explores up to 20 pages and waits (`status: awaiting_selection`)
+until you choose which ones get scenarios (`POST /jobs/{id}/pages/select`).
 
 ```json
 202 Accepted
@@ -258,6 +260,7 @@ curl -OJ -H "Authorization: Bearer $TOKEN" http://localhost:8000/jobs/77ac7e6a-6
 | `GET /jobs/{id}/scenarios` | The scenarios (`SC-001`…), with steps and expected result |
 | `GET /jobs/{id}/usage` | LLM calls, tokens and estimated cost of the job |
 | `GET /billing/me` | Plan, jobs used this month, upgrade links |
+| `POST /jobs/{id}/pages/select` | For a job created with `select_pages: true`: the pages that get scenarios; resumes the job |
 | `DELETE /auth/me` | Deletes the account with everything it owns (password confirmation) |
 | `DELETE /jobs/{id}` | Deletes the job, its pages and scenarios |
 | `GET /Health` | Health check (public) |

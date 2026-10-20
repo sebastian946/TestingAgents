@@ -19,6 +19,8 @@ MoneyType = Numeric(12, 6).with_variant(Float(), "sqlite")
 class JobStatus(str, enum.Enum):
     QUEUED = "queued"
     RUNNING = "running"
+    # WTA-32: pages discovered, waiting for the user to pick which ones get scenarios
+    AWAITING_SELECTION = "awaiting_selection"
     DONE = "done"
     FAILED = "failed"
 
@@ -109,6 +111,8 @@ class Job(Base):
     login_credentials: Mapped[str | None] = mapped_column(Text)
     # Language of the scenarios and the report: "en" | "es" (config/languages.py)
     language: Mapped[str] = mapped_column(String(5), default="en", server_default="en")
+    # WTA-32: explore first, then let the user choose the pages before spending on the LLM
+    select_pages: Mapped[bool] = mapped_column(default=False, server_default="false")
     pages_crawled: Mapped[int] = mapped_column(default=0)
     total_scenarios: Mapped[int] = mapped_column(default=0)
     report_path: Mapped[str | None] = mapped_column(Text)
@@ -133,6 +137,9 @@ class Page(Base):
     page_type: Mapped[str | None] = mapped_column(String(100))
     screenshot_path: Mapped[str | None] = mapped_column(Text)
     elements: Mapped[dict[str, Any] | None] = mapped_column(JSONType)  # PageInfo inventory (WTA-11)
+    # WTA-32: whether the Designer covers this page; every page is selected unless the user
+    # unticks it while the job is awaiting_selection
+    selected: Mapped[bool] = mapped_column(default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     job: Mapped["Job"] = relationship(back_populates="pages")

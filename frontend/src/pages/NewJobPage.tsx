@@ -13,6 +13,7 @@ export function NewJobPage() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [authorized, setAuthorized] = useState(false)
+  const [selectPages, setSelectPages] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [quotaExceeded, setQuotaExceeded] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -28,6 +29,7 @@ export function NewJobPage() {
         description: description.trim() || undefined,
         language,
         login: withLogin ? { login_url: loginUrl.trim() || undefined, username, password, authorized } : undefined,
+        select_pages: selectPages,
       })
       navigate(`/job/${job.id}`)
     } catch (err) {
@@ -81,6 +83,19 @@ export function NewJobPage() {
           </div>
         </fieldset>
 
+        <div className="field" style={{ marginTop: 'var(--space-6)' }}>
+          <label className="check" style={{ alignItems: 'flex-start' }}>
+            <input type="checkbox" checked={selectPages} onChange={(e) => setSelectPages(e.target.checked)} style={{ marginTop: 2 }} />
+            <span>
+              <b>Let me choose the pages first.</b>
+              <span className="help" style={{ display: 'block', marginTop: 2 }}>
+                We explore up to 20 pages and pause; you pick which ones get scenarios. Only the pages you keep count toward the
+                cost.
+              </span>
+            </span>
+          </label>
+        </div>
+
         <fieldset className="field" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)', margin: 'var(--space-6) 0 0' }}>
           <legend style={{ padding: '0 var(--space-1)' }}>
             <label className="check" style={{ fontWeight: 600 }}>
@@ -101,7 +116,7 @@ export function NewJobPage() {
                 </label>
                 <input id="login_url" type="url" placeholder="https://www.example.com/login" className="input" value={loginUrl} onChange={(e) => setLoginUrl(e.target.value)} />
               </div>
-              <div style={{ display: 'grid', gap: 'var(--space-4)', gridTemplateColumns: 'repeat(auto-fit, minmax(12rem, 1fr))' }}>
+              <div className="field-grid">
                 <div className="field">
                   <label htmlFor="username" className="label">
                     Username or email

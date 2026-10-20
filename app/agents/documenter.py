@@ -329,7 +329,8 @@ def generate_report(db: Session, job_id: uuid.UUID, reports_dir: str | Path) -> 
     report_job = ReportJob(
         job.id, job.url, job.description, job.status.value, job.started_at, job.finished_at, job.language,
     )
-    pages = [ReportPage(p.id, p.url, p.title, p.page_type) for p in db_crud.get_pages_by_job(db, job_id)]
+    # Only the pages the user kept (WTA-32); every page is selected in a normal job
+    pages = [ReportPage(p.id, p.url, p.title, p.page_type) for p in db_crud.get_selected_pages(db, job_id)]
     scenarios = [
         ReportScenario(s.scenario_code, s.page_id, s.title, list(s.steps or []), s.expected_result, s.priority, s.category)
         for s in db_crud.get_scenarios_by_job(db, job_id)

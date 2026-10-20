@@ -188,6 +188,7 @@ copy .env.example .env
 | `RETENTION_DAYS` | finished jobs older than this are deleted by the worker; `0` keeps everything | `90` |
 | `DEFAULT_PLAN` | plan of accounts without a subscription (`free`, `starter`, `pro`) | `free` |
 | `LEMONSQUEEZY_*` | webhook secret, variant ids and checkout URLs; see [deployment.md](deployment.md) | unset |
+| `DISCOVERY_MAX_PAGES` | pages explored when the user will choose them (`select_pages`), no LLM cost | `20` |
 | `CREDENTIALS_KEY` | Fernet key for the per-job login credentials (WTA-29); without it, jobs with a login get `503` | unset |
 | `SQL_ECHO` | print every SQL statement to the console | `true` (production: `false`) |
 | `REDIS_PASSWORD`, `DOMAIN` | production only, see [deployment.md](deployment.md) | unset |
@@ -362,6 +363,19 @@ asking for a new one invalidates the previous. `services/mailer.py` sends throug
 or `resend`. Emails go out in FastAPI background tasks, so a provider outage is logged and the
 user can ask again instead of getting a 500. `tests/test_email.py` covers it; API tests get a
 verified account from `tests.conftest.sign_in`, which captures the email and clicks its link.
+
+### Choosing the pages before spending (WTA-32)
+
+`POST /jobs` with `"select_pages": true` explores up to `DISCOVERY_MAX_PAGES` (20) pages and
+then **pauses**: the graph's `pause` node sets the status `awaiting_selection` (and clears
+any login credentials). `GET /jobs/{id}/pages` lists what was found, every page `selected`
+by default. `POST /jobs/{id}/pages/select` with `{"page_ids": [...]}` keeps those pages,
+sets the job back to `queued` and enqueues `worker.tasks.continue_job_task`, which runs
+`continuation_graph` (designer -> documenter / fail) on the selected pages only; unselected
+pages stay in the job, get no scenarios and are left out of the report. While waiting, the
+report endpoint answers `409` with `status: awaiting_selection`; the dashboard shows
+checkboxes and a "Generate scenarios for N pages" button. Tests:
+`tests/test_page_selection.py`.
 
 ### Sites behind a login (WTA-29)
 

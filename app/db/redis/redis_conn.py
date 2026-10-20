@@ -19,6 +19,12 @@ def enqueue_options() -> dict:
     return options
 
 
+def enqueue_continuation(job_id: uuid.UUID) -> None:
+    """WTA-32: resume a job after the user selected its pages (designer + documenter)."""
+    job_queue.enqueue("worker.tasks.continue_job_task", str(job_id), **enqueue_options())
+    print(f"Enqueued the continuation of job {job_id}.")
+
+
 def add_new_job_to_queue(job_id: uuid.UUID) -> None:
     """Add a new job to the Redis queue."""
     # Task referenced by its import path: the API does not need to import the worker code

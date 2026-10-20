@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     auth_verify_token_hours: int = 48
     auth_reset_token_minutes: int = 60
 
+    # WTA-32: pages explored when the user will pick the ones to design (no LLM cost, so
+    # more than the 8 of a direct job)
+    discovery_max_pages: int = 20
+
     # Reliability (WTA-8): a job that raises is re-enqueued up to this many times (the crawl
     # restarts from scratch, mark_job_running wipes the previous attempt), and no single
     # attempt may run longer than the timeout (RQ kills it and it counts as a failure)

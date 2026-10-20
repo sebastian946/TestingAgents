@@ -136,7 +136,7 @@ def count_jobs_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:
 
 def create_job(
     db: Session, url: str, description: str | None = None, language: str = "en", user_id: uuid.UUID | None = None,
-    login_url: str | None = None, login_credentials: str | None = None,
+    login_url: str | None = None, login_credentials: str | None = None, select_pages: bool = False,
 ) -> Job:
     """POST /jobs: create the job in QUEUED state.
 
@@ -147,7 +147,7 @@ def create_job(
     """
     job = Job(
         url=url, description=(description or "").strip() or None, language=language, status=JobStatus.QUEUED,
-        user_id=user_id, login_url=login_url, login_credentials=login_credentials,
+        user_id=user_id, login_url=login_url, login_credentials=login_credentials, select_pages=select_pages,
     )
     db.add(job)
     db.commit()
@@ -209,6 +209,47 @@ def mark_job_running(db: Session, job_id: uuid.UUID) -> Job | None:
     db.commit()
     db.refresh(job)
     return job
+
+
+def mark_job_awaiting_selection(db: Session, job_id: uuid.UUID) -> Job | None:
+    """Pause node (WTA-32): the pages are stored, the user decides which ones get scenarios."""
+    job = db.get(Job, job_id)
+    if job is None:
+        return None
+    job.status = JobStatus.AWAITING_SELECTION
+    job.login_credentials = None  # the crawl is over; nothing needs the secret
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def select_pages(db: Session, job_id: uuid.UUID, page_ids: list[int]) -> int:
+    """Mark the chosen pages as selected and the rest as not; returns how many are selected."""
+    db.execute(update(Page).where(Page.job_id == job_id).values(selected=Page.id.in_(page_ids)))
+    db.commit()
+    return db.scalar(select(func.count()).select_from(Page).where(Page.job_id == job_id, Page.selected.is_(True))) or 0
+
+
+def mark_job_designing(db: Session, job_id: uuid.UUID) -> Job | None:
+    """Continuation (WTA-32): AWAITING_SELECTION/QUEUED -> RUNNING keeping the pages. Only the
+    scenarios of a previous attempt go, so the codes start again at SC-001."""
+    job = db.get(Job, job_id)
+    if job is None:
+        return None
+    db.execute(delete(Scenario).where(Scenario.job_id == job_id))
+    job.total_scenarios = 0
+    job.report_path = None
+    job.finished_at = None
+    job.error = None
+    job.status = JobStatus.RUNNING
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def get_selected_pages(db: Session, job_id: uuid.UUID) -> list[Page]:
+    stmt = select(Page).where(Page.job_id == job_id, Page.selected.is_(True)).order_by(Page.id)
+    return list(db.scalars(stmt))
 
 
 def mark_job_done(
