@@ -14,7 +14,7 @@ export function Layout() {
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <header className={`header${open ? ' is-open' : ''}`}>
         <div className="header-inner">
-          <Logo />
+          <Logo size={28} />
           <nav className="nav" aria-label="Main">
             <NavLink to="/dashboard" end className={({ isActive }) => (isActive ? 'is-active' : undefined)} onClick={() => setOpen(false)}>
               Jobs
@@ -31,7 +31,10 @@ export function Layout() {
             New job
           </NavLink>
           <NavLink to="/account" className="user-email" title="Account settings" onClick={() => setOpen(false)}>
-            {user?.email}
+            <span className="avatar" aria-hidden="true">
+              {(user?.email ?? '?').slice(0, 2).toUpperCase()}
+            </span>
+            <span className="text">{user?.email}</span>
           </NavLink>
           <button
             type="button"

@@ -129,9 +129,11 @@ export function JobDetailPage() {
   return (
     <div className="stack" style={{ gap: 0 }}>
       <div>
-        <Link to="/dashboard" className="back-link">
-          ← Jobs
-        </Link>
+        <nav className="crumbs" aria-label="Breadcrumb">
+          <Link to="/dashboard">Jobs</Link>
+          <span className="sep">›</span>
+          <span className="current">{hostOf(job.url)}</span>
+        </nav>
         <div className="page-head" style={{ marginTop: 'var(--space-2)', marginBottom: 'var(--space-4)' }}>
           <div style={{ minWidth: 0 }}>
             <h1 className="section-title row" style={{ marginBottom: 'var(--space-1)' }}>
@@ -142,7 +144,7 @@ export function JobDetailPage() {
             </a>
           </div>
           <div className="row">
-            <button type="button" className="btn-primary" onClick={download} disabled={job.status !== 'done' || downloading}>
+            <button type="button" className="btn-outline" onClick={download} disabled={job.status !== 'done' || downloading}>
               <svg viewBox="0 0 24 24">
                 <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
               </svg>
@@ -320,7 +322,7 @@ export function JobDetailPage() {
 
 function Stat({ label, value, hint, small, mono }: { label: string; value: string | number; hint?: string; small?: boolean; mono?: boolean }) {
   return (
-    <div className="stat">
+    <div className="stat in-card">
       <div className="stat-label">{label}</div>
       <div className={`stat-value${small ? ' is-small' : ''}${mono ? ' tw-mono' : ''}`}>{value}</div>
       {hint && <div className="stat-hint">{hint}</div>}

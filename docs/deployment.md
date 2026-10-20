@@ -72,7 +72,8 @@ Set in `.env`:
 | `REDIS_PASSWORD` | `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `DOMAIN` | the hostname from step 2 |
 | `SENTRY_DSN`, `SENTRY_ENVIRONMENT=production` | error reports with the stack trace, by email, from sentry.io (free plan). Create a project of type FastAPI and copy its DSN |
-| `LEMONSQUEEZY_WEBHOOK_SECRET`, `LEMONSQUEEZY_VARIANT_STARTER`, `LEMONSQUEEZY_VARIANT_PRO`, `LEMONSQUEEZY_CHECKOUT_STARTER_URL`, `LEMONSQUEEZY_CHECKOUT_PRO_URL` | billing (ADR-09). In Lemon Squeezy: create a store, two subscription products (Starter US$19/month, Pro US$49/month), copy each variant id and its "Share" checkout URL, and add a webhook to `https://DOMAIN/billing/webhook/lemonsqueezy` with the subscription events and a signing secret. Without these, everyone stays on `DEFAULT_PLAN` and the dashboard says payments are not enabled |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO` | billing (ADR-09), see "Stripe setup" below. Without these, everyone stays on `DEFAULT_PLAN` and the dashboard says payments are not enabled |
+| `STRIPE_AUTOMATIC_TAX` | `true` only after enabling Stripe Tax (with a tax registration) in the Stripe dashboard; checkout then collects the billing address and adds taxes |
 | `DEFAULT_PLAN` | `free` in production |
 | `RETENTION_DAYS` | `90`: finished jobs older than that are deleted with their files |
 | `CREDENTIALS_KEY` | `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`: encrypts the login credentials customers give for a job (deleted after the crawl). Without it, jobs with a login are refused |
@@ -95,6 +96,37 @@ The first build takes a few minutes (Chromium for the worker, `npm ci` for the d
 `ps` should show every service `healthy`; Caddy's log (`docker compose ... logs caddy`) shows
 the certificate being issued. Open `https://DOMAIN/` for the landing, `https://DOMAIN/dashboard` for the app, `https://DOMAIN/docs`
 for the API.
+
+### 4b. Stripe setup
+
+Billing follows ADR-09. Everything below is done once in the Stripe dashboard, first in
+**test mode** (toggle at the top right), then repeated in live mode with live keys.
+
+1. **Products**: Product catalog > Add product. Create `Tests Wise Starter` with one
+   recurring price of US$19 per month and `Tests Wise Pro` with US$49 per month. Copy the
+   two price ids (`price_...`) into `STRIPE_PRICE_STARTER` and `STRIPE_PRICE_PRO`.
+2. **API key**: Developers > API keys > Secret key (`sk_test_...` / `sk_live_...`) into
+   `STRIPE_SECRET_KEY`. Restricted keys work too: they need write access to Checkout
+   Sessions, Customers, Subscriptions and Billing Portal.
+3. **Webhook**: Developers > Webhooks > Add destination, endpoint URL
+   `https://DOMAIN/billing/webhook/stripe`, events `checkout.session.completed`,
+   `customer.subscription.created`, `customer.subscription.updated`,
+   `customer.subscription.deleted`. Copy its signing secret (`whsec_...`) into
+   `STRIPE_WEBHOOK_SECRET`. Each mode (test/live) has its own endpoint and secret.
+4. **Customer portal**: Settings > Billing > Customer portal. Enable "Update payment
+   method", "Cancel subscription" (at period end) and, optionally, "Switch plans" with
+   the two products. Save; no key is needed.
+5. **Branding and emails**: Settings > Business > Branding (logo, brand color `#b8431a`)
+   and Settings > Billing > Emails (send receipts and failed-payment emails).
+6. Restart the API (`docker compose ... up -d api`) after editing `.env`, open
+   `/billing`, pick Starter and pay with the test card `4242 4242 4242 4242` (any future
+   date, any CVC). The dashboard must show the Starter plan within seconds, and
+   Developers > Webhooks must list the deliveries as succeeded (200). Then "Manage
+   subscription" must open the portal.
+
+Locally, without a public URL, forward the events with the Stripe CLI:
+`stripe listen --forward-to localhost:8000/billing/webhook/stripe` prints a temporary
+`whsec_...` to put in `.env` while it runs.
 
 ### 5. Smoke test
 
@@ -182,7 +214,7 @@ What the deployment gives you, so you can answer customers' questions:
 - [ ] `ANTHROPIC_API_KEY` has a spend limit.
 - [ ] `CREDENTIALS_KEY` set, if customers will test sites behind a login.
 - [ ] `SENTRY_DSN` set and a test error visible in Sentry.
-- [ ] Lemon Squeezy: webhook created and a test purchase (test mode) upgraded an account; `DEFAULT_PLAN=free`.
+- [ ] Stripe: live webhook endpoint created, a test-mode purchase with card `4242 4242 4242 4242` upgraded an account, portal works; `DEFAULT_PLAN=free`.
 - [ ] A backup dump restored on a clean database at least once.
 - [ ] Terms of service and privacy policy linked from the registration page.
 - [ ] Dependabot enabled in the repository settings (`.github/dependabot.yml` is in place).

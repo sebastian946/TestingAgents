@@ -60,7 +60,7 @@ class Subscription(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
     plan: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20))
-    provider: Mapped[str] = mapped_column(String(20))  # lemonsqueezy
+    provider: Mapped[str] = mapped_column(String(20))  # "stripe" (was lemonsqueezy before WTA-34)
     provider_subscription_id: Mapped[str] = mapped_column(String(64), unique=True)
     provider_customer_id: Mapped[str | None] = mapped_column(String(64))
     customer_portal_url: Mapped[str | None] = mapped_column(Text)  # where the user manages / cancels
