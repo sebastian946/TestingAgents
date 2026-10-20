@@ -78,9 +78,15 @@ class Usage:
     current_period_end: datetime | None
     customer_portal_url: str | None
 
+    runs_this_month: int = 0
+
     @property
     def remaining(self) -> int:
         return max(0, self.plan.jobs_per_month - self.used_this_month)
+
+    @property
+    def runs_remaining(self) -> int:
+        return max(0, self.plan.test_runs_per_month - self.runs_this_month)
 
 
 def usage_for(db: Session, user: User) -> Usage:
@@ -89,9 +95,11 @@ def usage_for(db: Session, user: User) -> Usage:
     now = _now()
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     used = db_crud.count_jobs_since(db, user.id, month_start)
+    runs = db_crud.count_runs_since(db, user.id, month_start) if plan.test_runs_per_month else 0
     return Usage(
         plan=plan,
         used_this_month=used,
+        runs_this_month=runs,
         status=subscription.status if subscription else None,
         current_period_end=_aware(subscription.current_period_end) if subscription else None,
         customer_portal_url=subscription.customer_portal_url if subscription else None,

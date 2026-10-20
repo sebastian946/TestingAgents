@@ -188,6 +188,9 @@ copy .env.example .env
 | `RETENTION_DAYS` | finished jobs older than this are deleted by the worker; `0` keeps everything | `90` |
 | `DEFAULT_PLAN` | plan of accounts without a subscription (`free`, `starter`, `pro`) | `free` |
 | `LEMONSQUEEZY_*` | webhook secret, variant ids and checkout URLs; see [deployment.md](deployment.md) | unset |
+| `EXECUTOR_MODEL`, `EXECUTOR_EFFORT` | the model that runs scenarios (WTA-33) | `claude-sonnet-5-5`, `medium` |
+| `EXECUTOR_MAX_STEPS`, `EXECUTOR_SCENARIO_TIMEOUT`, `EXECUTOR_MAX_SCENARIOS`, `RUN_TIMEOUT_SECONDS` | caps of a run | `20`, `120`, `25`, `3600` |
+| `DISCOVERY_MAX_PAGES` | pages explored when the user will choose them (`select_pages`), no LLM cost | `20` |
 | `CREDENTIALS_KEY` | Fernet key for the per-job login credentials (WTA-29); without it, jobs with a login get `503` | unset |
 | `SQL_ECHO` | print every SQL statement to the console | `true` (production: `false`) |
 | `REDIS_PASSWORD`, `DOMAIN` | production only, see [deployment.md](deployment.md) | unset |
@@ -362,6 +365,38 @@ asking for a new one invalidates the previous. `services/mailer.py` sends throug
 or `resend`. Emails go out in FastAPI background tasks, so a provider outage is logged and the
 user can ask again instead of getting a 500. `tests/test_email.py` covers it; API tests get a
 verified account from `tests.conftest.sign_in`, which captures the email and clicks its link.
+
+### Choosing the pages before spending (WTA-32)
+
+`POST /jobs` with `"select_pages": true` explores up to `DISCOVERY_MAX_PAGES` (20) pages and
+then **pauses**: the graph's `pause` node sets the status `awaiting_selection` (and clears
+any login credentials). `GET /jobs/{id}/pages` lists what was found, every page `selected`
+by default. `POST /jobs/{id}/pages/select` with `{"page_ids": [...]}` keeps those pages,
+sets the job back to `queued` and enqueues `worker.tasks.continue_job_task`, which runs
+`continuation_graph` (designer -> documenter / fail) on the selected pages only; unselected
+pages stay in the job, get no scenarios and are left out of the report. While waiting, the
+report endpoint answers `409` with `status: awaiting_selection`; the dashboard shows
+checkboxes and a "Generate scenarios for N pages" button. Tests:
+`tests/test_page_selection.py`.
+
+### Automated test runs (WTA-33)
+
+`POST /jobs/{id}/runs` with `{"test_environment": true, "login"?: {...}}` (Pro plan,
+`Plan.test_runs_per_month`, `402` past it; the job must be `done`; one run at a time)
+creates a `test_runs` row and enqueues `worker.tasks.run_tests_task`. The worker
+(`worker/run_tests.py`) opens one Chromium, logs in if credentials were given (ADR-08 rules),
+and for each scenario of the selected pages (at most `EXECUTOR_MAX_SCENARIOS`) calls
+`agents.executor.execute_scenario`: a Messages API tool-use loop on `EXECUTOR_MODEL`
+(Sonnet) with the tools `navigate`, `read_page`, `click`, `fill`, `press`, `finish`, bound to
+the job's host. Verdicts (`pass` / `fail` / `blocked`, a reason, the step log, a final
+screenshot) go to `scenario_results` one commit at a time, the run's counters move with
+them, every model call is an `llm_calls` row with `agent = executor`, and the Excel gets a
+third sheet, Results. `GET /jobs/{id}/runs`, `GET /jobs/{id}/runs/{run_id}` (with results)
+and `.../results/{result_id}/screenshot`. Guardrails: forbidden words (pay, purchase,
+delete, cancel...) are refused by the tools themselves; `EXECUTOR_MAX_STEPS` and
+`EXECUTOR_SCENARIO_TIMEOUT` turn a stuck scenario into `blocked`; `RUN_TIMEOUT_SECONDS`
+bounds the whole run. In `DESIGNER_MODE=fake` the Executor passes any page that loads.
+Design: [ADR-10](adr/ADR-10-executor-agent.md); tests: `tests/test_executor.py`.
 
 ### Sites behind a login (WTA-29)
 

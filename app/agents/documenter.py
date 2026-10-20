@@ -282,18 +282,55 @@ def _scenarios_sheet(
     result.add(f"I2:I{max(last_row, 500)}")
 
 
+@dataclass
+class ReportResult:
+    """The Executor's verdict on one scenario (WTA-33), for the Results sheet."""
+
+    code: str
+    title: str
+    outcome: str  # pass | fail | blocked
+    reason: str
+
+
+def _results_sheet(ws: Worksheet, results: list[ReportResult], finished_at: datetime | None, language: str) -> None:
+    t = texts(language)
+    ws.title = t["sheet_results"]
+    _put(ws.cell(row=1, column=1), t["results_title"]).font = TITLE_FONT
+    _put(ws.cell(row=2, column=1), t["results_subtitle"] + (f" {finished_at:%Y-%m-%d %H:%M}" if finished_at else ""))
+    counts = {k: sum(1 for r in results if r.outcome == k) for k in ("pass", "fail", "blocked")}
+    _put(ws.cell(row=3, column=1), ", ".join(f"{t['outcomes'][k]}: {v}" for k, v in counts.items()))
+    _header_row(ws, 5, t["results_columns"])
+    for index, width in enumerate([9, 48, 13, 80], start=1):
+        ws.column_dimensions[get_column_letter(index)].width = width
+    for row, r in enumerate(results, start=6):
+        values = [r.code, r.title, t["outcomes"].get(r.outcome, r.outcome), r.reason]
+        for col, value in enumerate(values, start=1):
+            cell = _put(ws.cell(row=row, column=col), value)
+            cell.alignment, cell.border = TOP_WRAP, GRID
+        fill = {"pass": "D9F0E6", "fail": "FDE2DF", "blocked": "FDEFD0"}.get(r.outcome)
+        if fill:
+            ws.cell(row=row, column=3).fill = PatternFill("solid", fgColor=fill)
+        ws.row_dimensions[row].height = max(18, 15 * _lines_needed(r.reason, 80))
+    ws.freeze_panes = "A6"
+
+
 def build_workbook(
     job: ReportJob,
     pages: list[ReportPage],
     scenarios: list[ReportScenario],
     generated_at: datetime | None = None,
+    results: list[ReportResult] | None = None,
+    results_at: datetime | None = None,
 ) -> Workbook:
-    """Build the report from plain data. Totals come from `scenarios` itself."""
+    """Build the report from plain data. Totals come from `scenarios` itself. With `results`
+    (an automated run, WTA-33) a third sheet lists the Executor's verdicts."""
     wb = Workbook()
     summary = wb.active
     assert isinstance(summary, Worksheet)  # a new Workbook always starts with one worksheet
     _summary_sheet(summary, job, pages, scenarios, generated_at or datetime.now(timezone.utc))
     _scenarios_sheet(wb.create_sheet(), pages, scenarios, job.language)
+    if results:
+        _results_sheet(wb.create_sheet(), results, results_at, job.language)
     wb.active = 0
     wb.properties.title = f"{texts(job.language)['doc_title']} - {job.url}"
     wb.properties.creator = "WebTestAgent"
@@ -329,15 +366,28 @@ def generate_report(db: Session, job_id: uuid.UUID, reports_dir: str | Path) -> 
     report_job = ReportJob(
         job.id, job.url, job.description, job.status.value, job.started_at, job.finished_at, job.language,
     )
-    pages = [ReportPage(p.id, p.url, p.title, p.page_type) for p in db_crud.get_pages_by_job(db, job_id)]
+    # Only the pages the user kept (WTA-32); every page is selected in a normal job
+    pages = [ReportPage(p.id, p.url, p.title, p.page_type) for p in db_crud.get_selected_pages(db, job_id)]
     scenarios = [
         ReportScenario(s.scenario_code, s.page_id, s.title, list(s.steps or []), s.expected_result, s.priority, s.category)
         for s in db_crud.get_scenarios_by_job(db, job_id)
     ]
 
+    # The latest finished automated run, if any (WTA-33)
+    results: list[ReportResult] = []
+    results_at = None
+    run = db_crud.get_latest_done_run(db, job_id)
+    if run is not None:
+        by_id = {s.id: s for s in db_crud.get_scenarios_by_job(db, job_id)}
+        for r in db_crud.get_results_by_run(db, run.id):
+            s = by_id.get(r.scenario_id)
+            if s is not None:
+                results.append(ReportResult(s.scenario_code, s.title, r.outcome, r.reason))
+        results_at = run.finished_at
+
     path = report_file(reports_dir, job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".xlsx.tmp")
-    build_workbook(report_job, pages, scenarios).save(tmp)
+    build_workbook(report_job, pages, scenarios, results=results, results_at=results_at).save(tmp)
     os.replace(tmp, path)  # atomic: a download never sees a half-written file
     return path

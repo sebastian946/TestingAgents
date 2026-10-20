@@ -29,7 +29,7 @@ export function setToken(token: string | null): void {
 // ---------------------------------------------------------------- types (mirror models.py)
 
 export type Language = 'en' | 'es'
-export type JobStatus = 'queued' | 'running' | 'done' | 'failed'
+export type JobStatus = 'queued' | 'running' | 'awaiting_selection' | 'done' | 'failed'
 
 export interface User {
   id: string
@@ -52,6 +52,8 @@ export interface Job {
   language: Language
   /** The login page when the site was explored logged in; credentials are never returned */
   login_url: string | null
+  /** Explore first, then wait for the user to pick the pages (WTA-32) */
+  select_pages: boolean
   status: JobStatus
   pages_crawled: number
   total_scenarios: number
@@ -69,6 +71,7 @@ export interface Page {
   title: string | null
   page_type: string | null
   elements: Record<string, unknown> | null
+  selected: boolean
   created_at: string
 }
 
@@ -101,17 +104,52 @@ export interface Plan {
   name: string
   jobs_per_month: number
   price_usd: number
+  test_runs_per_month: number
 }
 
 export interface BillingInfo {
   plan: Plan
   used_this_month: number
   remaining: number
+  runs_this_month: number
+  runs_remaining: number
   status: string | null
   current_period_end: string | null
   customer_portal_url: string | null
   plans: Plan[]
   checkout_urls: Record<string, string>
+}
+
+export type RunStatus = 'queued' | 'running' | 'done' | 'failed'
+
+export interface ScenarioResult {
+  id: number
+  scenario_id: number
+  outcome: 'pass' | 'fail' | 'blocked' | string
+  reason: string
+  steps: unknown[]
+  has_screenshot: boolean
+  created_at: string
+}
+
+export interface Run {
+  id: number
+  job_id: string
+  status: RunStatus
+  total: number
+  passed: number
+  failed: number
+  blocked: number
+  error: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  results: ScenarioResult[]
+}
+
+export interface RunCreate {
+  test_environment: boolean
+  login?: JobLogin
 }
 
 export interface JobLogin {
@@ -127,6 +165,7 @@ export interface JobCreate {
   language: Language
   /** Log in before exploring (WTA-29): used once for this job, then deleted server-side */
   login?: JobLogin
+  select_pages?: boolean
 }
 
 // ---------------------------------------------------------------- errors
@@ -210,6 +249,19 @@ export const api = {
   getScenarios: (id: string) => request<Scenario[]>('GET', `/jobs/${id}/scenarios`),
   getUsage: (id: string) => request<Usage>('GET', `/jobs/${id}/usage`),
   deleteJob: (id: string) => request<void>('DELETE', `/jobs/${id}`),
+  selectPages: (id: string, pageIds: number[]) => request<Job>('POST', `/jobs/${id}/pages/select`, { page_ids: pageIds }),
+  listRuns: (id: string) => request<Run[]>('GET', `/jobs/${id}/runs`),
+  getRun: (id: string, runId: number) => request<Run>('GET', `/jobs/${id}/runs/${runId}`),
+  startRun: (id: string, payload: RunCreate) => request<Run>('POST', `/jobs/${id}/runs`, payload),
+  /** The screenshot needs the bearer header: fetch it and return an object URL */
+  async resultScreenshot(id: string, runId: number, resultId: number): Promise<string> {
+    const token = getToken()
+    const response = await fetch(`${API_URL}/jobs/${id}/runs/${runId}/results/${resultId}/screenshot`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!response.ok) throw new ApiError(response.status, 'Screenshot not available.')
+    return URL.createObjectURL(await response.blob())
+  },
 
   /** The report needs the bearer header, so a plain link cannot download it: fetch the bytes
    *  and hand the browser a blob with the server's file name. */

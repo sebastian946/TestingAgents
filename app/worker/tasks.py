@@ -9,6 +9,7 @@ import uuid
 from rq import get_current_job
 
 from agents import graph
+from worker.run_tests import run_tests
 from config.variables import TRACING_ENABLED, settings
 from db import db_crud
 from db.conn import local_session
@@ -80,12 +81,51 @@ def process_url_task(job_id: str) -> None:
             return
         initial_state = {
             "job_id": job_id, "url": job.url, "description": job.description, "language": job.language,
+            "select_pages": bool(job.select_pages),
         }
     print(f"Processing URL for job {job_id}: {initial_state['url']}")
+    _run(graph.testing_graph, job_id, job_uuid, initial_state)
 
+
+def continue_job_task(job_id: str) -> None:
+    """WTA-32: a job that paused for the page selection; runs designer + documenter on the
+    pages the user kept. Enqueued by POST /jobs/{id}/pages/select."""
+    job_uuid = uuid.UUID(job_id)
+    with local_session() as db:
+        job = db_crud.mark_job_designing(db, job_uuid)
+        if job is None:
+            print(f"Job {job_id} not found, skipping.")
+            return
+        pages = db_crud.get_selected_pages(db, job_uuid)
+        initial_state = {
+            "job_id": job_id, "url": job.url, "description": job.description, "language": job.language,
+            "select_pages": True,
+            "pages": [graph.PageState(page_id=p.id, url=p.url, title=p.title, page_type=p.page_type, elements=p.elements)
+                      for p in pages],
+        }
+    print(f"Continuing job {job_id} with {len(initial_state['pages'])} selected pages")
+    _run(graph.continuation_graph, job_id, job_uuid, initial_state)
+
+
+def run_tests_task(run_id: int) -> None:
+    """WTA-33: execute a job's scenarios in the browser; enqueued by POST /jobs/{id}/runs."""
+    try:
+        summary = run_tests(run_id)
+    except Exception as e:
+        with local_session() as db:
+            db_crud.finish_run(db, run_id, error=_failure_reason(e))
+        print(f"Error in test run {run_id}: {e}")
+        raise
+    finally:
+        _flush_traces()
+    print(f"Test run {run_id} {summary['status']}: {summary.get('passed', 0)} passed, "
+          f"{summary.get('failed', 0)} failed, {summary.get('blocked', 0)} blocked.")
+
+
+def _run(compiled_graph, job_id: str, job_uuid: uuid.UUID, initial_state: dict) -> None:
     try:
         config = _trace_config(job_id, initial_state["url"], initial_state["language"])
-        final_state = graph.testing_graph.invoke(initial_state, config=config)
+        final_state = compiled_graph.invoke(initial_state, config=config)
     except Exception as e:
         # Real errors (browser crash, invalid API key, database down, the RQ timeout).
         # "Nothing to work with" is not an exception: the graph routes it to its `fail`

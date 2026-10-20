@@ -12,7 +12,7 @@ into the state before the next node runs. Ownership:
 | scenarios_designed        | designer           | route_after_designer, fail      |
 | pages_without_scenarios   | designer           | documenter, fail                |
 | report_path               | documenter         | the worker (output)             |
-| status, error             | documenter or fail | the worker (output)             |
+| status, error             | documenter, fail or pause | the worker (output)      |
 
 Everything is plain JSON-able data (ids, strings, dicts), never ORM objects, DB sessions
 or the browser: those live inside a node and die with it. That keeps the state small and
@@ -48,6 +48,7 @@ class TestingState(TypedDict):
     url: str
     description: str | None
     language: NotRequired[str]  # "en" | "es" (config/languages.py); "en" when missing
+    select_pages: NotRequired[bool]  # WTA-32: pause after exploring so the user picks the pages
 
     # explorer
     pages: NotRequired[list[PageState]]
@@ -61,5 +62,5 @@ class TestingState(TypedDict):
     report_path: NotRequired[str]
 
     # terminal nodes (documenter on success, fail otherwise)
-    status: NotRequired[Literal["done", "failed"]]
+    status: NotRequired[Literal["done", "failed", "awaiting_selection"]]
     error: NotRequired[str | None]

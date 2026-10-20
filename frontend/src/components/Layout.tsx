@@ -55,7 +55,7 @@ export function Layout() {
         <Outlet />
       </main>
       <footer className="site-footer">
-        <span>© {new Date().getFullYear()} Tests Wise</span>
+        <span>© 2026 Tests Wise</span>
         <span className="spacer" />
         <a href="/terms">Terms</a>
         <a href="/privacy">Privacy</a>

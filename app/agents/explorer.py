@@ -318,6 +318,12 @@ class PlaywrightFetcher:
         finally:
             page.close()
 
+    def new_page(self):
+        """A page in the crawl's context (same cookies, same blocked resources); the Executor
+        (WTA-33) drives one for a whole run."""
+        assert self._context is not None, "use PlaywrightFetcher inside a `with` block"
+        return self._context.new_page()
+
     def _screenshot(self, page) -> str | None:
         """Save a full-page PNG; a failure here must never fail the page itself."""
         from playwright.sync_api import Error as PlaywrightError

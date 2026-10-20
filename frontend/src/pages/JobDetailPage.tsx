@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
-import { api, ApiError, type Job, type Page, type Scenario, type Usage } from '../api'
+import { api, ApiError, type BillingInfo, type Job, type Page, type Scenario, type Usage } from '../api'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { RunPanel } from '../components/RunPanel'
 import { ErrorBox, LANGUAGE_NAMES, Notice, PriorityBadge, StatusBadge, duration, formatDate, hostOf } from '../components/ui'
 
 const REFRESH_MS = 3000
@@ -23,6 +24,10 @@ export function JobDetailPage() {
   const [downloading, setDownloading] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [picked, setPicked] = useState<Set<number> | null>(null)
+  const [submittingSelection, setSubmittingSelection] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+  const [billing, setBilling] = useState<BillingInfo | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -37,6 +42,7 @@ export function JobDetailPage() {
         if (cancelled) return
         setData({ job, pages, scenarios, usage })
         setError(null)
+        if (job.status === 'awaiting_selection') setPicked((prev) => prev ?? new Set(pages.filter((p) => p.selected).map((p) => p.id)))
         if (job.status === 'queued' || job.status === 'running') timer = window.setTimeout(load, REFRESH_MS)
       } catch (err) {
         if (!cancelled) setError(err instanceof ApiError ? err.message : 'Could not load the job.')
@@ -47,7 +53,26 @@ export function JobDetailPage() {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [id])
+  }, [id, reloadKey])
+
+  useEffect(() => {
+    api.billing().then(setBilling).catch(() => setBilling(null))
+  }, [])
+
+  async function submitSelection() {
+    if (!picked || picked.size === 0) return
+    setActionError(null)
+    setSubmittingSelection(true)
+    try {
+      await api.selectPages(id, [...picked])
+      setPicked(null)
+      setReloadKey((k) => k + 1) // the job is queued again: resume polling
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : 'Could not start the scenarios.')
+    } finally {
+      setSubmittingSelection(false)
+    }
+  }
 
   async function download() {
     setActionError(null)
@@ -89,7 +114,17 @@ export function JobDetailPage() {
 
   const { job, pages, scenarios, usage } = data
   const inProgress = job.status === 'queued' || job.status === 'running'
+  const choosing = job.status === 'awaiting_selection' && picked !== null
   const pageById = new Map(pages.map((p) => [p.id, p]))
+
+  function togglePage(pageId: number) {
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(pageId)) next.delete(pageId)
+      else next.add(pageId)
+      return next
+    })
+  }
 
   return (
     <div className="stack" style={{ gap: 0 }}>
@@ -136,6 +171,12 @@ export function JobDetailPage() {
           This page refreshes by itself.
         </Notice>
       )}
+      {choosing && (
+        <Notice variant="info">
+          We found <b>{pages.length} pages</b>. Tick the ones that should get test scenarios and press <b>Generate scenarios</b>. Only those
+          pages count toward your plan's cost.
+        </Notice>
+      )}
       {job.status === 'failed' && <ErrorBox message={`The job failed: ${job.error ?? 'unknown reason'}`} />}
       {job.status === 'done' && job.error && <Notice variant="warning">{job.error}</Notice>}
 
@@ -169,7 +210,24 @@ export function JobDetailPage() {
       )}
 
       <section style={{ marginTop: 'var(--space-8)' }}>
-        <h2 className="section-title">Pages explored ({pages.length})</h2>
+        <div className="page-head" style={{ marginBottom: 'var(--space-3)' }}>
+          <h2 className="section-title" style={{ margin: 0 }}>
+            Pages explored ({pages.length})
+          </h2>
+          {choosing && (
+            <div className="row">
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setPicked(new Set(pages.map((p) => p.id)))}>
+                Select all
+              </button>
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setPicked(new Set())}>
+                Select none
+              </button>
+              <button type="button" className="btn-primary" onClick={submitSelection} disabled={submittingSelection || picked.size === 0}>
+                {submittingSelection ? 'Starting…' : `Generate scenarios for ${picked.size} page${picked.size === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          )}
+        </div>
         {pages.length === 0 ? (
           <p className="muted">No pages yet.</p>
         ) : (
@@ -177,6 +235,7 @@ export function JobDetailPage() {
             <table className="table">
               <thead>
                 <tr>
+                  {choosing && <th style={{ width: 40 }} />}
                   <th>URL</th>
                   <th>Title</th>
                   <th>Type</th>
@@ -185,7 +244,17 @@ export function JobDetailPage() {
               </thead>
               <tbody>
                 {pages.map((page) => (
-                  <tr key={page.id}>
+                  <tr
+                    key={page.id}
+                    className={choosing ? 'is-link' : undefined}
+                    onClick={choosing ? () => togglePage(page.id) : undefined}
+                    style={!choosing && job.select_pages && !page.selected ? { opacity: 0.55 } : undefined}
+                  >
+                    {choosing && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" checked={picked.has(page.id)} onChange={() => togglePage(page.id)} aria-label={`Include ${page.url}`} style={{ accentColor: 'var(--brand)', width: 18, height: 18 }} />
+                      </td>
+                    )}
                     <td>
                       <span className="url" title={page.url}>
                         {page.url}
@@ -193,7 +262,7 @@ export function JobDetailPage() {
                     </td>
                     <td>{page.title ?? '—'}</td>
                     <td className="meta">{page.page_type ?? '—'}</td>
-                    <td className="num">{scenarios.filter((s) => s.page_id === page.id).length}</td>
+                    <td className="num">{!choosing && job.select_pages && !page.selected ? <span className="meta">skipped</span> : scenarios.filter((s) => s.page_id === page.id).length}</td>
                   </tr>
                 ))}
               </tbody>
@@ -238,6 +307,8 @@ export function JobDetailPage() {
           </div>
         )}
       </section>
+
+      {job.status === 'done' && scenarios.length > 0 && <RunPanel job={job} scenarios={scenarios} billing={billing} />}
 
       <ConfirmDialog open={confirmDelete} title="Delete this job?" confirmLabel="Delete job" busy={deleting} onConfirm={remove} onCancel={() => setConfirmDelete(false)}>
         The report for <b style={{ color: 'var(--ink)' }}>{hostOf(job.url)}</b> and its {job.total_scenarios} scenarios will be removed. This cannot be

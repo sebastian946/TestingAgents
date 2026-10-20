@@ -26,7 +26,7 @@ from langgraph.graph import END, START, StateGraph
 
 from agents.designer import CallUsage, PageDesign, PageLike, design_pages
 from agents.documenter import generate_report, report_file
-from agents.explorer import CrawledPage, LoginResult, crawl
+from agents.explorer import DEFAULT_MAX_PAGES, CrawledPage, LoginResult, crawl
 from agents.state import PageGap, PageState, TestingState
 from config.variables import settings
 from db import db_crud
@@ -97,10 +97,12 @@ def explorer(state: TestingState) -> dict:
     shutil.rmtree(screenshot_dir, ignore_errors=True)
     report_file(settings.reports_dir, job_id).unlink(missing_ok=True)
 
-    # use_browser: render JavaScript and extract the PageInfo inventory (WTA-11)
+    # use_browser: render JavaScript and extract the PageInfo inventory (WTA-11). When the
+    # user will pick the pages (WTA-32) the crawl goes wider: it costs time, not tokens
+    max_pages = settings.discovery_max_pages if state.get("select_pages") else DEFAULT_MAX_PAGES
     try:
-        crawl(state["url"], on_page=persist_page, use_browser=True, screenshot_dir=screenshot_dir,
-              login=login, on_login=note_login)
+        crawl(state["url"], max_pages=max_pages, on_page=persist_page, use_browser=True,
+              screenshot_dir=screenshot_dir, login=login, on_login=note_login)
     finally:
         if blob:  # the browser is closed: nothing needs the secret any more, whatever happened
             with local_session() as db:
@@ -178,6 +180,15 @@ def documenter(state: TestingState) -> dict:
     return {"report_path": str(path), "status": "done", "error": summary}
 
 
+def pause(state: TestingState) -> dict:
+    """Reads job_id, pages. Writes status. WTA-32: the job stops here until the user selects
+    the pages; `continue_job_task` then runs `continuation_graph` on them."""
+    with local_session() as db:
+        db_crud.mark_job_awaiting_selection(db, uuid.UUID(state["job_id"]))
+    print(f"[graph] pause: {len(state.get('pages', []))} pages found, waiting for the selection")
+    return {"status": "awaiting_selection"}
+
+
 def fail(state: TestingState) -> dict:
     """Reads pages, scenarios_designed, pages_without_scenarios. Writes status, error."""
     if not state.get("pages"):
@@ -194,9 +205,11 @@ def fail(state: TestingState) -> dict:
 
 # ----------------------------------------------------------------------- conditional edges
 
-def route_after_explorer(state: TestingState) -> Literal["designer", "fail"]:
-    """Pages found -> design them; none -> fail."""
-    return "designer" if state.get("pages") else "fail"
+def route_after_explorer(state: TestingState) -> Literal["designer", "pause", "fail"]:
+    """Pages found -> design them (or pause for the user's selection, WTA-32); none -> fail."""
+    if not state.get("pages"):
+        return "fail"
+    return "pause" if state.get("select_pages") else "designer"
 
 
 def route_after_designer(state: TestingState) -> Literal["documenter", "fail"]:
@@ -211,14 +224,34 @@ def build_graph() -> StateGraph:
     graph.add_node("explorer", explorer)
     graph.add_node("designer", designer)
     graph.add_node("documenter", documenter)
+    graph.add_node("pause", pause)
     graph.add_node("fail", fail)
 
     graph.add_edge(START, "explorer")
-    graph.add_conditional_edges("explorer", route_after_explorer, {"designer": "designer", "fail": "fail"})
+    graph.add_conditional_edges("explorer", route_after_explorer, {"designer": "designer", "pause": "pause", "fail": "fail"})
+    graph.add_conditional_edges("designer", route_after_designer, {"documenter": "documenter", "fail": "fail"})
+    graph.add_edge("documenter", END)
+    graph.add_edge("pause", END)
+    graph.add_edge("fail", END)
+    return graph
+
+
+testing_graph = build_graph().compile()
+
+
+def build_continuation_graph() -> StateGraph:
+    """WTA-32: the second half of a paused job. The worker loads the selected pages into the
+    state (`continue_job_task`) and the designer and documenter run exactly as in the main
+    graph: same nodes, same ownership of state keys."""
+    graph = StateGraph(TestingState)
+    graph.add_node("designer", designer)
+    graph.add_node("documenter", documenter)
+    graph.add_node("fail", fail)
+    graph.add_edge(START, "designer")
     graph.add_conditional_edges("designer", route_after_designer, {"documenter": "documenter", "fail": "fail"})
     graph.add_edge("documenter", END)
     graph.add_edge("fail", END)
     return graph
 
 
-testing_graph = build_graph().compile()
+continuation_graph = build_continuation_graph().compile()

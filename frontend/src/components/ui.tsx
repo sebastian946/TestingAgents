@@ -2,11 +2,19 @@ import type { ReactNode } from 'react'
 
 import type { JobStatus } from '../api'
 
+const STATUS_LABELS: Record<JobStatus, string> = {
+  queued: 'queued',
+  running: 'running',
+  awaiting_selection: 'choose pages',
+  done: 'done',
+  failed: 'failed',
+}
+
 export function StatusBadge({ status }: { status: JobStatus }) {
   return (
     <span className={`badge badge-${status}`}>
       <span className="dot" />
-      {status}
+      {STATUS_LABELS[status] ?? status}
     </span>
   )
 }

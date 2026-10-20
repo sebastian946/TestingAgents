@@ -6,7 +6,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from db.models_db.models_db import EmailToken, Job, JobStatus, LlmCall, Page, Scenario, Subscription, User
+from db.models_db.models_db import (
+    EmailToken, Job, JobStatus, LlmCall, Page, RunStatus, Scenario, ScenarioResult, Subscription, TestRun, User,
+)
 
 
 def _now() -> datetime:
@@ -126,6 +128,83 @@ def upsert_subscription(db: Session, user_id: uuid.UUID, **fields) -> Subscripti
     return subscription
 
 
+# ------------------------------------------------------------- Test runs (WTA-33)
+
+def create_run(db: Session, job_id: uuid.UUID, login_credentials: str | None = None) -> TestRun:
+    run = TestRun(job_id=job_id, status=RunStatus.QUEUED, login_credentials=login_credentials)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def get_run(db: Session, run_id: int) -> TestRun | None:
+    return db.get(TestRun, run_id)
+
+
+def get_runs_by_job(db: Session, job_id: uuid.UUID) -> list[TestRun]:
+    stmt = select(TestRun).where(TestRun.job_id == job_id).order_by(TestRun.id.desc())
+    return list(db.scalars(stmt))
+
+
+def get_latest_done_run(db: Session, job_id: uuid.UUID) -> TestRun | None:
+    stmt = (select(TestRun).where(TestRun.job_id == job_id, TestRun.status == RunStatus.DONE)
+            .order_by(TestRun.id.desc()).limit(1))
+    return db.scalars(stmt).first()
+
+
+def count_runs_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:
+    """Runs a user started at or after `since` (the per-month allowance of the plan)."""
+    stmt = (select(func.count()).select_from(TestRun).join(Job, Job.id == TestRun.job_id)
+            .where(Job.user_id == user_id, TestRun.created_at >= since))
+    return db.scalar(stmt) or 0
+
+
+def mark_run_running(db: Session, run_id: int, total: int) -> TestRun | None:
+    run = db.get(TestRun, run_id)
+    if run is None:
+        return None
+    db.execute(delete(ScenarioResult).where(ScenarioResult.run_id == run_id))  # a retry starts clean
+    run.status, run.started_at, run.total = RunStatus.RUNNING, _now(), total
+    run.passed = run.failed = run.blocked = 0
+    run.error = None
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def add_scenario_result(
+    db: Session, run_id: int, scenario_id: int, outcome: str, reason: str, steps: list, screenshot_path: str | None,
+) -> ScenarioResult:
+    """One commit per scenario: the row and the run's counter move together (live progress)."""
+    row = ScenarioResult(run_id=run_id, scenario_id=scenario_id, outcome=outcome, reason=reason, steps=steps,
+                         screenshot_path=screenshot_path)
+    db.add(row)
+    column = {"pass": TestRun.passed, "fail": TestRun.failed}.get(outcome, TestRun.blocked)
+    db.execute(update(TestRun).where(TestRun.id == run_id).values({column.key: column + 1}))
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def finish_run(db: Session, run_id: int, error: str | None = None) -> TestRun | None:
+    run = db.get(TestRun, run_id)
+    if run is None:
+        return None
+    run.status = RunStatus.FAILED if error else RunStatus.DONE
+    run.error = error[:2000] if error else None
+    run.finished_at = _now()
+    run.login_credentials = None
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def get_results_by_run(db: Session, run_id: int) -> list[ScenarioResult]:
+    stmt = select(ScenarioResult).where(ScenarioResult.run_id == run_id).order_by(ScenarioResult.id)
+    return list(db.scalars(stmt))
+
+
 def count_jobs_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:
     """Jobs a user created at or after `since` (the per-hour limit in POST /jobs)."""
     stmt = select(func.count()).select_from(Job).where(Job.user_id == user_id, Job.created_at >= since)
@@ -136,7 +215,7 @@ def count_jobs_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:
 
 def create_job(
     db: Session, url: str, description: str | None = None, language: str = "en", user_id: uuid.UUID | None = None,
-    login_url: str | None = None, login_credentials: str | None = None,
+    login_url: str | None = None, login_credentials: str | None = None, select_pages: bool = False,
 ) -> Job:
     """POST /jobs: create the job in QUEUED state.
 
@@ -147,7 +226,7 @@ def create_job(
     """
     job = Job(
         url=url, description=(description or "").strip() or None, language=language, status=JobStatus.QUEUED,
-        user_id=user_id, login_url=login_url, login_credentials=login_credentials,
+        user_id=user_id, login_url=login_url, login_credentials=login_credentials, select_pages=select_pages,
     )
     db.add(job)
     db.commit()
@@ -209,6 +288,47 @@ def mark_job_running(db: Session, job_id: uuid.UUID) -> Job | None:
     db.commit()
     db.refresh(job)
     return job
+
+
+def mark_job_awaiting_selection(db: Session, job_id: uuid.UUID) -> Job | None:
+    """Pause node (WTA-32): the pages are stored, the user decides which ones get scenarios."""
+    job = db.get(Job, job_id)
+    if job is None:
+        return None
+    job.status = JobStatus.AWAITING_SELECTION
+    job.login_credentials = None  # the crawl is over; nothing needs the secret
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def select_pages(db: Session, job_id: uuid.UUID, page_ids: list[int]) -> int:
+    """Mark the chosen pages as selected and the rest as not; returns how many are selected."""
+    db.execute(update(Page).where(Page.job_id == job_id).values(selected=Page.id.in_(page_ids)))
+    db.commit()
+    return db.scalar(select(func.count()).select_from(Page).where(Page.job_id == job_id, Page.selected.is_(True))) or 0
+
+
+def mark_job_designing(db: Session, job_id: uuid.UUID) -> Job | None:
+    """Continuation (WTA-32): AWAITING_SELECTION/QUEUED -> RUNNING keeping the pages. Only the
+    scenarios of a previous attempt go, so the codes start again at SC-001."""
+    job = db.get(Job, job_id)
+    if job is None:
+        return None
+    db.execute(delete(Scenario).where(Scenario.job_id == job_id))
+    job.total_scenarios = 0
+    job.report_path = None
+    job.finished_at = None
+    job.error = None
+    job.status = JobStatus.RUNNING
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def get_selected_pages(db: Session, job_id: uuid.UUID) -> list[Page]:
+    stmt = select(Page).where(Page.job_id == job_id, Page.selected.is_(True)).order_by(Page.id)
+    return list(db.scalars(stmt))
 
 
 def mark_job_done(
