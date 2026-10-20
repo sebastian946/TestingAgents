@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
@@ -13,6 +14,7 @@ from db.conn import get_db
 from db.models_db.models_db import Job, JobStatus, User
 from db.redis.redis_conn import add_new_job_to_queue
 from models.models import JobCreate, JobRead, JobUsage, PageRead, ScenarioRead
+from security import credentials
 from security.auth import get_current_user, require_verified_email
 from security.ssrf import UnsafeURLError, validate_public_url
 
@@ -49,6 +51,25 @@ def create_job(payload: JobCreate, user: User = Depends(require_verified_email),
     except UnsafeURLError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
+    login_url = encrypted = None
+    if payload.login is not None:
+        # WTA-29: same anti-SSRF check on the login page, which must be on the site under test;
+        # the secret is encrypted before it touches the database and never echoed back
+        if not payload.login.authorized:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Confirm that you are authorized to test this site with this account.")
+        if not credentials.configured():
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                detail="This server is not configured to store login credentials (CREDENTIALS_KEY).")
+        try:
+            login_url = validate_public_url(payload.login.login_url or url)
+        except UnsafeURLError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Login URL: {exc}")
+        if urlsplit(login_url).hostname != urlsplit(url).hostname:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="The login page must be on the same site as the URL under test.")
+        encrypted = credentials.encrypt(credentials.LoginSpec(login_url, payload.login.username, payload.login.password))
+
     since = datetime.now(timezone.utc) - timedelta(hours=1)
     if db_crud.count_jobs_since(db, user.id, since) >= settings.auth_max_jobs_per_hour:
         raise HTTPException(
@@ -59,6 +80,7 @@ def create_job(payload: JobCreate, user: User = Depends(require_verified_email),
 
     job = db_crud.create_job(
         db, url=url, description=payload.description, language=payload.language, user_id=user.id,
+        login_url=login_url, login_credentials=encrypted,
     )
     try:
         add_new_job_to_queue(job.id)

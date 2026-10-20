@@ -181,6 +181,7 @@ copy .env.example .env
 | `RESEND_API_KEY`, `EMAIL_FROM` | Resend key and verified sender (`Name <no-reply@yourdomain.com>`) | unset |
 | `APP_URL` | public URL of the dashboard, used in the email links | `http://localhost:5173` |
 | `CORS_ORIGINS` | JSON list of browser origins allowed by CORS | `["*"]` |
+| `CREDENTIALS_KEY` | Fernet key for the per-job login credentials (WTA-29); without it, jobs with a login get `503` | unset |
 | `SQL_ECHO` | print every SQL statement to the console | `true` (production: `false`) |
 | `REDIS_PASSWORD`, `DOMAIN` | production only, see [deployment.md](deployment.md) | unset |
 
@@ -299,7 +300,7 @@ button takes the token.
 | `POST` | `/auth/register` | body `{"email", "password"}` (8+ characters); `201` with `{access_token, token_type, expires_in, user}`; `409` if the email is taken; `422` if the email is malformed or the password too short |
 | `POST` | `/auth/login` | same body; `200` with the same token shape; `401` "Wrong email or password" (never says which) |
 | `GET` | `/auth/me` | the account behind the token |
-| `POST` | `/jobs` | body `{"url", "description"?, "language"?: "en" \| "es"}`; `202` with the created job; `400` if the URL is not http/https, does not resolve, or points to an internal network (anti-SSRF); `422` for an unsupported language; `429` + `Retry-After` past `AUTH_MAX_JOBS_PER_HOUR` |
+| `POST` | `/jobs` | body `{"url", "description"?, "language"?: "en" \| "es", "login"?: {"login_url"?, "username", "password", "authorized": true}}`; `202` with the created job; `400` if the URL is not http/https, does not resolve, or points to an internal network (anti-SSRF); `422` for an unsupported language; `429` + `Retry-After` past `AUTH_MAX_JOBS_PER_HOUR` |
 | `GET` | `/jobs` | the caller's jobs (newest first), optional `limit` and `offset` |
 | `GET` | `/jobs/{id}` | the job; `404` if it does not exist; `422` if the id is not a UUID |
 | `GET` | `/jobs/{id}/pages` | pages crawled for the job |
@@ -354,6 +355,28 @@ asking for a new one invalidates the previous. `services/mailer.py` sends throug
 or `resend`. Emails go out in FastAPI background tasks, so a provider outage is logged and the
 user can ask again instead of getting a 500. `tests/test_email.py` covers it; API tests get a
 verified account from `tests.conftest.sign_in`, which captures the email and clicks its link.
+
+### Sites behind a login (WTA-29)
+
+`POST /jobs` accepts an optional `login` object: `login_url` (defaults to the job URL),
+`username`, `password` and `authorized: true` (the customer confirms they may test that site
+with that account). The explorer opens the login page in Chromium, finds the visible
+password field, the text/email field before it and the form's submit, signs in, and crawls
+with that session. A visible password field after submitting means the login failed: the
+crawl continues anonymously and `job.error` says so. While logged in, links whose path
+contains an action word (`logout`, `delete`, `checkout`, `pay`, `cancel`, ...,
+`UNSAFE_LINK_WORDS` in `agents/explorer.py`) are not followed: the crawler acts as a real user.
+
+The credentials are encrypted with `CREDENTIALS_KEY` (`security/credentials.py`, Fernet)
+before the row is written, decrypted only inside the explorer node, and cleared from
+`job.login_credentials` in a `finally` right after the crawl; `mark_job_done`,
+`mark_job_failed` and a worker start-up sweep clear them again. They never enter the graph
+state, the API responses (only `login_url` is shown), the report or the LLM prompt. The
+login page must pass the anti-SSRF check and be on the same host as the job URL. Design:
+[ADR-08](adr/ADR-08-authenticated-crawls.md); tests: `tests/test_login_crawl.py` (a local
+site with a cookie session, crawled in Chromium).
+
+Not supported: 2FA, captchas, social login. Ask the customer for a test account without them.
 
 ## Querying the scenarios (WTA-17)
 

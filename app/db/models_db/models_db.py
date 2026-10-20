@@ -77,6 +77,10 @@ class Job(Base):
         default=JobStatus.QUEUED,
     )
     description: Mapped[str | None] = mapped_column(String(500))
+    # Authenticated crawl (WTA-29): the login page, kept for the record, and the encrypted
+    # username/password (security/credentials.py), NULLed as soon as the crawl is over
+    login_url: Mapped[str | None] = mapped_column(Text)
+    login_credentials: Mapped[str | None] = mapped_column(Text)
     # Language of the scenarios and the report: "en" | "es" (config/languages.py)
     language: Mapped[str] = mapped_column(String(5), default="en", server_default="en")
     pages_crawled: Mapped[int] = mapped_column(default=0)

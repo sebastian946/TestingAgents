@@ -96,16 +96,18 @@ def count_jobs_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:
 
 def create_job(
     db: Session, url: str, description: str | None = None, language: str = "en", user_id: uuid.UUID | None = None,
+    login_url: str | None = None, login_credentials: str | None = None,
 ) -> Job:
     """POST /jobs: create the job in QUEUED state.
 
     `description` is the user's own description of the app; the Designer uses it to weight
     priorities (WTA-15). Blank strings are stored as NULL. `user_id` is the owner: the API
-    always sets it, only internal tests create ownerless jobs.
+    always sets it, only internal tests create ownerless jobs. `login_credentials` is the
+    already-encrypted blob from security/credentials.py (WTA-29), never plain text.
     """
     job = Job(
         url=url, description=(description or "").strip() or None, language=language, status=JobStatus.QUEUED,
-        user_id=user_id,
+        user_id=user_id, login_url=login_url, login_credentials=login_credentials,
     )
     db.add(job)
     db.commit()
@@ -183,6 +185,7 @@ def mark_job_done(
     job.status = JobStatus.DONE
     job.finished_at = _now()
     job.error = error
+    job.login_credentials = None  # safety net: the explorer already cleared them (WTA-29)
     if report_path is not None:
         job.report_path = report_path
     db.commit()
@@ -209,9 +212,31 @@ def mark_job_failed(db: Session, job_id: uuid.UUID, error: str) -> Job | None:
     job.status = JobStatus.FAILED
     job.finished_at = _now()
     job.error = error[:2000]
+    job.login_credentials = None  # a failed job must not keep the secret either (WTA-29)
     db.commit()
     db.refresh(job)
     return job
+
+
+def clear_job_credentials(db: Session, job_id: uuid.UUID) -> None:
+    """Forget a job's login credentials (WTA-29): right after the crawl, whatever its outcome."""
+    db.execute(update(Job).where(Job.id == job_id).values(login_credentials=None))
+    db.commit()
+
+
+def clear_stale_credentials(db: Session, max_age: timedelta = timedelta(hours=1)) -> int:
+    """Worker start-up sweep (WTA-29): credentials of jobs that are finished, or older than
+    `max_age` (a worker that died mid-crawl never reached the normal clearing). Returns how
+    many rows were cleared."""
+    cutoff = _now() - max_age
+    result = db.execute(
+        update(Job)
+        .where(Job.login_credentials.is_not(None))
+        .where((Job.status.in_([JobStatus.DONE, JobStatus.FAILED])) | (Job.created_at < cutoff))
+        .values(login_credentials=None)
+    )
+    db.commit()
+    return result.rowcount or 0
 
 
 def delete_job(db: Session, job_id: uuid.UUID) -> bool:

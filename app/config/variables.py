@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     auth_verify_token_hours: int = 48
     auth_reset_token_minutes: int = 60
 
+    # Fernet key that encrypts the login credentials a user gives for one job (WTA-29).
+    # Optional: without it, jobs with a login are refused. Generate with
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    credentials_key: str | None = None
+
     # Email (WTA-28): verification links and password resets. "console" prints the message
     # to the API log (development, tests); "resend" sends it through https://resend.com
     email_backend: Literal["console", "resend"] = "console"
