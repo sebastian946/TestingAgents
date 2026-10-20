@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 
 import { ApiError } from '../api'
 import { Logo } from '../components/Logo'
@@ -21,7 +21,12 @@ export function AuthForm({ title, subtitle, submitLabel, onSubmit, footer }: Pro
   const [busy, setBusy] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
-  const from = (location.state as { from?: string } | null)?.from ?? '/dashboard'
+  const [params] = useSearchParams()
+  // A plan chosen on the landing (/register?plan=starter) continues to the checkout after
+  // the account exists; otherwise go back to where a 401 interrupted, or the dashboard
+  const plan = params.get('plan')
+  const from = (location.state as { from?: string } | null)?.from ?? (plan ? `/billing?plan=${encodeURIComponent(plan)}` : '/dashboard')
+  const keepPlan = (to: string) => (plan ? `${to}?plan=${encodeURIComponent(plan)}` : to)
   const isLogin = submitLabel === 'Log in'
 
   async function handleSubmit(event: FormEvent) {
@@ -46,7 +51,7 @@ export function AuthForm({ title, subtitle, submitLabel, onSubmit, footer }: Pro
         </div>
         <h1 className="card-title">{title}</h1>
         <p className="muted" style={{ margin: '0 0 var(--space-16)' }}>
-          {subtitle}
+          {plan && plan !== 'free' ? `You picked the ${plan[0].toUpperCase()}${plan.slice(1)} plan: the payment page opens right after this step.` : subtitle}
         </p>
         <form onSubmit={handleSubmit}>
           <div className="field">
@@ -87,7 +92,7 @@ export function AuthForm({ title, subtitle, submitLabel, onSubmit, footer }: Pro
           </button>
         </form>
         <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-16)' }}>
-          {footer.text} <Link to={footer.to}>{footer.linkText}</Link>
+          {footer.text} <Link to={keepPlan(footer.to)}>{footer.linkText}</Link>
         </p>
         {!isLogin && (
           <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-2)' }}>

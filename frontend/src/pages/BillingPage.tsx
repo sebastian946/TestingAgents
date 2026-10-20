@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { api, ApiError, type BillingInfo } from '../api'
-import { ErrorBox, formatDate } from '../components/ui'
+import { ErrorBox, Notice, formatDate } from '../components/ui'
 
 const PLAN_FEATURES: Record<string, string[]> = {
   free: ['Up to 8 pages per job', 'Excel report', 'English and Spanish scenarios'],
@@ -12,6 +13,9 @@ const PLAN_FEATURES: Record<string, string[]> = {
 export function BillingPage() {
   const [info, setInfo] = useState<BillingInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [params, setParams] = useSearchParams()
+  const wanted = params.get('plan')
+  const redirected = useRef(false)
 
   useEffect(() => {
     api
@@ -20,8 +24,20 @@ export function BillingPage() {
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load your plan.'))
   }, [])
 
+  // /billing?plan=starter (from the landing or the register page): go straight to the hosted
+  // checkout when it exists; otherwise fall through and explain why the button is missing
+  useEffect(() => {
+    if (!info || !wanted || redirected.current) return
+    const url = info.checkout_urls[wanted]
+    if (url && wanted !== info.plan.code) {
+      redirected.current = true
+      window.location.assign(url)
+    }
+  }, [info, wanted])
+
   if (error) return <ErrorBox message={error} />
   if (!info) return <p className="muted">Loading…</p>
+  const wantedPlan = wanted ? info.plans.find((p) => p.code === wanted) : undefined
 
   const percent = Math.min(100, Math.round((info.used_this_month / info.plan.jobs_per_month) * 100))
   const billingConfigured = Object.keys(info.checkout_urls).length > 0
@@ -32,6 +48,29 @@ export function BillingPage() {
         <h1 className="page-title">Plan and usage</h1>
       </div>
 
+      {wantedPlan && wantedPlan.code === info.plan.code && (
+        <div style={{ marginBottom: 'var(--space-16)' }}>
+          <Notice variant="success">You are already on the {wantedPlan.name} plan.</Notice>
+        </div>
+      )}
+      {wantedPlan && wantedPlan.code !== info.plan.code && info.checkout_urls[wantedPlan.code] && (
+        <div style={{ marginBottom: 'var(--space-16)' }}>
+          <Notice variant="info">
+            Opening the payment page for {wantedPlan.name}…{' '}
+            <a href={info.checkout_urls[wantedPlan.code]}>Click here if it does not open.</a>
+          </Notice>
+        </div>
+      )}
+      {wantedPlan && wantedPlan.code !== info.plan.code && !info.checkout_urls[wantedPlan.code] && (
+        <div style={{ marginBottom: 'var(--space-16)' }}>
+          <Notice variant="warning">
+            Payments are not enabled on this server yet, so the {wantedPlan.name} plan cannot be purchased right now.{' '}
+            <button type="button" className="link" onClick={() => setParams({})}>
+              Dismiss
+            </button>
+          </Notice>
+        </div>
+      )}
       <div className="card">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <div className="stat">
