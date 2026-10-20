@@ -32,11 +32,11 @@ export function ConfirmDialog({ open, title, children, confirmLabel, busy, onCon
           {title}
         </h2>
         <div className="muted">{children}</div>
-        <div className="actions">
+        <div className="card-footer">
           <button ref={cancelRef} type="button" className="btn-ghost" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="button" className="btn-danger" onClick={onConfirm} disabled={busy}>
+          <button type="button" className="btn-danger is-solid" onClick={onConfirm} disabled={busy}>
             {busy ? 'Working…' : confirmLabel}
           </button>
         </div>

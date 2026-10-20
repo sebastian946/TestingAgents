@@ -424,11 +424,14 @@ Not supported: 2FA, captchas, social login. Ask the customer for a test account 
 
 Plans are monthly job allowances (`config/plans.py`: Free 3, Starter 10 for US$19, Pro 40 for US$49). `GET
 /billing/me` returns the plan in force, the jobs used this calendar month, the remaining
-allowance, the provider's status, and the hosted checkout links (with the user's email and
-id prefilled). `POST /jobs` answers `402` with `{message, plan, used, limit}` past the
-allowance. Payments go through Lemon Squeezy (a Merchant of Record, [ADR-09](adr/ADR-09-billing-merchant-of-record.md)):
-`POST /billing/webhook/lemonsqueezy` verifies the `X-Signature` HMAC on the raw body and
-upserts the user's `subscriptions` row (`services/billing.py`). Statuses `active`,
+allowance, the test runs used, the provider's status, `can_manage` (a Stripe customer
+exists) and `payments_enabled` (Stripe keys configured). `POST /jobs` answers `402` with
+`{message, plan, used, limit}` past the allowance. Payments go through Stripe
+([ADR-09](adr/ADR-09-billing-merchant-of-record.md)): `POST /billing/checkout {plan}`
+creates a hosted Checkout Session and returns its URL (our user id travels as
+`client_reference_id` and in the subscription metadata); `POST /billing/portal` returns a
+Customer Portal URL; `POST /billing/webhook/stripe` verifies `Stripe-Signature` with the
+SDK and upserts the user's `subscriptions` row (`services/billing.py`). Statuses `active`,
 `on_trial` and `past_due` keep the plan; `cancelled` keeps it until `current_period_end`;
 anything else falls back to `DEFAULT_PLAN`. Tests: `tests/test_billing_and_retention.py`.
 

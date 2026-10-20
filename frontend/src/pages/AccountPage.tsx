@@ -53,14 +53,14 @@ export function AccountPage() {
           <Link to="/billing" className="btn-secondary btn-sm">
             Plan and usage
           </Link>
-          <Link to="/forgot-password" className="btn-ghost btn-sm">
+          <Link to="/forgot-password" className="btn-outline btn-sm">
             Change password
           </Link>
         </div>
       </div>
 
-      <div className="card" style={{ marginTop: 'var(--space-6)', borderColor: 'var(--status-failed-ink)' }}>
-        <h2 className="card-title" style={{ color: 'var(--status-failed-ink)' }}>
+      <div className="card" style={{ marginTop: 'var(--space-6)', borderColor: 'var(--ember)' }}>
+        <h2 className="card-title" style={{ color: 'var(--ember)' }}>
           Delete account
         </h2>
         <p className="muted" style={{ margin: '0 0 var(--space-4)' }}>

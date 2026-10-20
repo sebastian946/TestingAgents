@@ -75,16 +75,15 @@ class Settings(BaseSettings):
     # scenarios and files, by the worker. 0 = keep forever
     retention_days: int = 90
 
-    # Billing (WTA-30, ADR-09) through Lemon Squeezy, a Merchant of Record. The webhook
-    # secret signs every event; the variant ids map a purchase to a plan (config/plans.py);
-    # the checkout URLs are the hosted "buy" links shown in the dashboard. Accounts without
-    # a subscription are on DEFAULT_PLAN
+    # Billing (WTA-30 / WTA-34, ADR-09) through Stripe: Checkout for the purchase, the
+    # Customer Portal for changes, a signed webhook for the truth. Price ids map a purchase
+    # to a plan (config/plans.py). Accounts without a subscription are on DEFAULT_PLAN
     default_plan: str = "free"
-    lemonsqueezy_webhook_secret: str | None = None
-    lemonsqueezy_variant_starter: str | None = None
-    lemonsqueezy_variant_pro: str | None = None
-    lemonsqueezy_checkout_starter_url: str | None = None
-    lemonsqueezy_checkout_pro_url: str | None = None
+    stripe_secret_key: str | None = None  # sk_test_... / sk_live_...
+    stripe_webhook_secret: str | None = None  # whsec_...
+    stripe_price_starter: str | None = None  # price_...
+    stripe_price_pro: str | None = None
+    stripe_automatic_tax: bool = False  # Stripe Tax: on once the account's tax settings are done
 
     # Fernet key that encrypts the login credentials a user gives for one job (WTA-29).
     # Optional: without it, jobs with a login are refused. Generate with

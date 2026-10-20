@@ -83,7 +83,7 @@ export function RunPanel({ job, scenarios, billing }: { job: Job; scenarios: Sce
           Automated run
         </h2>
         {job.status === 'done' && !inProgress && !showForm && (
-          <button type="button" className="btn-primary" onClick={() => setShowForm(true)} disabled={!canRun}>
+          <button type="button" className="btn-primary btn-sm" onClick={() => setShowForm(true)} disabled={!canRun}>
             <svg viewBox="0 0 24 24">
               <path d="M6 4l14 8-14 8z" />
             </svg>

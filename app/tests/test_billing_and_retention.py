@@ -1,10 +1,9 @@
-"""WTA-30: plans and monthly allowances, the Lemon Squeezy webhook, account deletion and
-the retention sweep. In-process API on SQLite, signed fake webhooks, no provider calls.
+"""WTA-30 / WTA-34: plans and monthly allowances, the Stripe webhook, checkout and portal,
+account deletion and the retention sweep. In-process API on SQLite; `stripe` is stubbed,
+no provider calls.
 """
-import hashlib
-import hmac
-import json
 import uuid
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -24,6 +23,11 @@ from tests.conftest import sign_in
 
 URL = "https://shop.example/"
 SECRET = "whsec-test"
+STRIPE_STUB: dict = {}
+
+
+class StubSignatureError(Exception):
+    pass
 
 
 @pytest.fixture
@@ -35,10 +39,28 @@ def client(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(routes, "add_new_job_to_queue", lambda job_id: None)
     monkeypatch.setattr(settings, "reports_dir", str(tmp_path / "reports"))
     monkeypatch.setattr(settings, "default_plan", "free")
-    monkeypatch.setattr(settings, "lemonsqueezy_webhook_secret", SECRET)
-    monkeypatch.setattr(settings, "lemonsqueezy_variant_starter", "111")
-    monkeypatch.setattr(settings, "lemonsqueezy_variant_pro", "222")
-    monkeypatch.setattr(settings, "lemonsqueezy_checkout_pro_url", "https://shop.lemonsqueezy.com/buy/pro")
+    monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_x")
+    monkeypatch.setattr(settings, "stripe_webhook_secret", SECRET)
+    monkeypatch.setattr(settings, "stripe_price_starter", "price_starter")
+    monkeypatch.setattr(settings, "stripe_price_pro", "price_pro")
+    monkeypatch.setattr(settings, "app_url", "https://app.example")
+    STRIPE_STUB.clear()
+
+    # The Stripe SDK, stubbed: signature check accepts SECRET, Checkout/Portal return URLs,
+    # Subscription.retrieve returns what the test registered under STRIPE_STUB["subs"]
+    def construct_event(raw, signature, secret):
+        if signature != SECRET or secret != SECRET:
+            raise StubSignatureError("bad signature")
+        import json
+        return json.loads(raw)
+
+    monkeypatch.setattr(billing.stripe.Webhook, "construct_event", staticmethod(construct_event))
+    monkeypatch.setattr(billing.stripe, "error", SimpleNamespace(SignatureVerificationError=StubSignatureError), raising=False)
+    monkeypatch.setattr(billing.stripe.checkout.Session, "create",
+                        staticmethod(lambda **p: STRIPE_STUB.setdefault("checkouts", []).append(p) or SimpleNamespace(url="https://checkout.stripe.test/cs_1")))
+    monkeypatch.setattr(billing.stripe.billing_portal.Session, "create",
+                        staticmethod(lambda **p: STRIPE_STUB.setdefault("portals", []).append(p) or SimpleNamespace(url="https://portal.stripe.test/ps_1")))
+    monkeypatch.setattr(billing.stripe.Subscription, "retrieve", staticmethod(lambda sid: STRIPE_STUB["subs"][sid]))
 
     def override_db():
         with factory() as db:
@@ -53,19 +75,20 @@ def client(tmp_path: Path, monkeypatch):
     engine.dispose()
 
 
-def webhook(client, event, user_id, variant="222", status="active", sub_id="sub-1", ends_at=None, secret=SECRET, **extra):
-    payload = {
-        "meta": {"event_name": event, "custom_data": {"user_id": str(user_id)}},
-        "data": {"type": "subscriptions", "id": sub_id, "attributes": {
-            "variant_id": int(variant) if variant.isdigit() else variant, "status": status, "customer_id": 9,
-            "renews_at": "2026-11-19T00:00:00.000000Z", "ends_at": ends_at,
-            "urls": {"customer_portal": "https://portal.example/sub-1"}, **extra,
-        }},
-    }
-    raw = json.dumps(payload).encode()
-    signature = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
-    return client.post("/billing/webhook/lemonsqueezy", content=raw,
-                       headers={"X-Signature": signature, "Content-Type": "application/json"})
+def subscription(user_id, price="price_pro", status="active", sub_id="sub_1", period_end=None, cancel_at_period_end=False):
+    """A Stripe subscription object as the webhook carries it (dict form, like the SDK's)."""
+    end = int((period_end or datetime(2026, 11, 19, tzinfo=timezone.utc)).timestamp())
+    return {"id": sub_id, "object": "subscription", "status": status, "customer": "cus_9",
+            "cancel_at_period_end": cancel_at_period_end, "metadata": {"user_id": str(user_id)},
+            "items": {"data": [{"price": {"id": price}, "current_period_end": end}]}}
+
+
+def webhook(client, event, obj, secret=SECRET):
+    import json
+
+    raw = json.dumps({"type": event, "data": {"object": obj}}).encode()
+    return client.post("/billing/webhook/stripe", content=raw,
+                       headers={"Stripe-Signature": secret, "Content-Type": "application/json"})
 
 
 # ----------------------------------------------------------------- allowances
@@ -73,9 +96,7 @@ def webhook(client, event, user_id, variant="222", status="active", sub_id="sub-
 def test_free_plan_allows_three_jobs_a_month_then_402(client):
     info = client.get("/billing/me").json()
     assert info["plan"]["code"] == "free" and info["remaining"] == 3 and info["status"] is None
-    assert info["checkout_urls"]["pro"].startswith("https://shop.lemonsqueezy.com/buy/pro?checkout[email]=")
-    assert f"checkout[custom][user_id]={client.user_id}" in info["checkout_urls"]["pro"]
-    assert "starter" not in info["checkout_urls"]  # not configured in this test
+    assert info["payments_enabled"] is True and info["can_manage"] is False
 
     for _ in range(3):
         assert client.post("/jobs", json={"url": URL}).status_code == 202
@@ -100,55 +121,83 @@ def test_jobs_from_last_month_do_not_count(client):
 
 # ----------------------------------------------------------------- webhook
 
-def test_a_signed_webhook_upgrades_the_account(client):
-    response = webhook(client, "subscription_created", client.user_id, variant="222")
-    assert response.status_code == 200 and "-> pro (active)" in response.json()["detail"]
+def test_checkout_creates_a_stripe_session_with_the_user_reference(client):
+    r = client.post("/billing/checkout", json={"plan": "pro"})
+    assert r.status_code == 200 and r.json()["url"] == "https://checkout.stripe.test/cs_1"
+    (params,) = STRIPE_STUB["checkouts"]
+    assert params["mode"] == "subscription" and params["line_items"] == [{"price": "price_pro", "quantity": 1}]
+    assert params["client_reference_id"] == str(client.user_id)
+    assert params["subscription_data"]["metadata"] == {"user_id": str(client.user_id), "plan": "pro"}
+    assert params["customer_email"] == "tester@example.com" and "customer" not in params
+    assert params["success_url"] == "https://app.example/billing?checkout=success"
+    assert client.post("/billing/checkout", json={"plan": "free"}).status_code == 400
+    assert client.post("/billing/checkout", json={"plan": "gold"}).status_code == 400
+    assert client.post("/billing/portal").status_code == 409  # no customer yet
+
+
+def test_a_completed_checkout_upgrades_the_account(client):
+    STRIPE_STUB["subs"] = {"sub_1": subscription(client.user_id, price="price_pro")}
+    r = webhook(client, "checkout.session.completed",
+                {"mode": "subscription", "subscription": "sub_1", "client_reference_id": str(client.user_id)})
+    assert r.status_code == 200 and "-> pro (active)" in r.json()["detail"]
 
     info = client.get("/billing/me").json()
     assert info["plan"]["code"] == "pro" and info["remaining"] == 40 and info["status"] == "active"
-    assert info["customer_portal_url"] == "https://portal.example/sub-1"
-    assert info["current_period_end"].startswith("2026-11-19")
+    assert info["can_manage"] is True and info["current_period_end"].startswith("2026-11-19")
     for _ in range(4):  # past the free limit now
         assert client.post("/jobs", json={"url": URL}).status_code == 202
 
+    # the portal now works, with the stored customer id and a return URL
+    assert client.post("/billing/portal").json()["url"] == "https://portal.stripe.test/ps_1"
+    assert STRIPE_STUB["portals"] == [{"customer": "cus_9", "return_url": "https://app.example/billing"}]
+    # and a second checkout reuses the customer instead of the email
+    client.post("/billing/checkout", json={"plan": "starter"})
+    assert STRIPE_STUB["checkouts"][-1]["customer"] == "cus_9"
 
-def test_updates_change_the_plan_in_place(client):
-    webhook(client, "subscription_created", client.user_id, variant="111")
+
+def test_subscription_updates_change_the_plan_in_place(client):
+    webhook(client, "customer.subscription.created", subscription(client.user_id, price="price_starter"))
     assert client.get("/billing/me").json()["plan"]["code"] == "starter"
-    webhook(client, "subscription_updated", client.user_id, variant="222")
+    webhook(client, "customer.subscription.updated", subscription(client.user_id, price="price_pro"))
     assert client.get("/billing/me").json()["plan"]["code"] == "pro"
     with client.factory() as db:
         assert db.scalar(select(func.count()).select_from(Subscription)) == 1
 
 
-def test_cancelled_keeps_the_plan_until_the_period_ends_then_falls_back(client):
-    future = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
-    webhook(client, "subscription_cancelled", client.user_id, status="cancelled", ends_at=future)
-    assert client.get("/billing/me").json()["plan"]["code"] == "pro"
-
-    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-    webhook(client, "subscription_expired", client.user_id, status="expired", ends_at=past)
+def test_cancel_at_period_end_keeps_the_plan_then_deletion_falls_back(client):
+    future = datetime.now(timezone.utc) + timedelta(days=10)
+    webhook(client, "customer.subscription.updated", subscription(client.user_id, period_end=future, cancel_at_period_end=True))
     info = client.get("/billing/me").json()
-    assert info["plan"]["code"] == "free" and info["status"] == "expired"
+    assert info["plan"]["code"] == "pro" and info["status"] == "cancelled"
+
+    past = datetime.now(timezone.utc) - timedelta(days=1)
+    webhook(client, "customer.subscription.deleted", subscription(client.user_id, status="canceled", period_end=past))
+    info = client.get("/billing/me").json()
+    assert info["plan"]["code"] == "free" and info["status"] == "cancelled"
+    webhook(client, "customer.subscription.updated", subscription(client.user_id, status="past_due"))
+    assert client.get("/billing/me").json()["plan"]["code"] == "pro"  # grace while Stripe retries the card
 
 
-def test_bad_signature_unknown_user_and_unknown_variant(client):
-    assert webhook(client, "subscription_created", client.user_id, secret="wrong").status_code == 400
-    assert client.post("/billing/webhook/lemonsqueezy", content=b"{}").status_code == 400  # no signature
-    assert webhook(client, "subscription_created", uuid.uuid4()).status_code == 400  # unknown user
-    r = webhook(client, "subscription_created", client.user_id, variant="999")
-    assert r.status_code == 200 and "ignored variant" in r.json()["detail"]
-    r = webhook(client, "order_created", client.user_id)
+def test_bad_signature_unknown_user_and_unknown_price(client):
+    assert webhook(client, "customer.subscription.created", subscription(client.user_id), secret="wrong").status_code == 400
+    assert client.post("/billing/webhook/stripe", content=b"{}").status_code == 400  # no signature
+    assert webhook(client, "customer.subscription.created", subscription(uuid.uuid4())).status_code == 400  # unknown user
+    r = webhook(client, "customer.subscription.created", subscription(client.user_id, price="price_other"))
+    assert r.status_code == 200 and "ignored price" in r.json()["detail"]
+    r = webhook(client, "invoice.paid", {"id": "in_1"})
     assert r.status_code == 200 and "ignored event" in r.json()["detail"]
+    r = webhook(client, "checkout.session.completed", {"mode": "payment", "subscription": None})
+    assert r.status_code == 200 and "ignored checkout" in r.json()["detail"]
     with client.factory() as db:
         assert db.scalar(select(func.count()).select_from(Subscription)) == 0
     assert client.get("/billing/me").json()["plan"]["code"] == "free"
 
 
-def test_webhook_is_503_when_billing_is_not_configured(client, monkeypatch):
-    monkeypatch.setattr(settings, "lemonsqueezy_webhook_secret", None)
-    assert webhook(client, "subscription_created", client.user_id).status_code == 503
-    assert client.get("/billing/me").json()["checkout_urls"] == {} or True  # checkout links are independent
+def test_webhook_and_checkout_are_503_when_billing_is_not_configured(client, monkeypatch):
+    monkeypatch.setattr(settings, "stripe_webhook_secret", None)
+    assert webhook(client, "customer.subscription.created", subscription(client.user_id)).status_code == 503
+    assert client.post("/billing/checkout", json={"plan": "pro"}).status_code == 503
+    assert client.get("/billing/me").json()["payments_enabled"] is False
 
 
 def test_plan_for_edge_cases(monkeypatch):
@@ -165,7 +214,7 @@ def test_plan_for_edge_cases(monkeypatch):
 # ----------------------------------------------------------------- account deletion
 
 def test_deleting_the_account_removes_everything_it_owns(client, tmp_path):
-    webhook(client, "subscription_created", client.user_id)
+    webhook(client, "customer.subscription.created", subscription(client.user_id))
     job_id = uuid.UUID(client.post("/jobs", json={"url": URL}).json()["id"])
     with client.factory() as db:
         db_crud.mark_job_running(db, job_id)

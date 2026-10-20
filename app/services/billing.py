@@ -1,24 +1,24 @@
-"""Plans, monthly allowances and the Lemon Squeezy webhook (WTA-30, ADR-09).
+"""Plans, monthly allowances and Stripe (WTA-30 / WTA-34, ADR-09).
 
-We never touch cards. Lemon Squeezy (a Merchant of Record) sells the subscription, handles
-taxes and refunds, and tells us the outcome through signed webhooks. Our side is small:
-which plan a user is on, how many jobs they used this month, and the checkout links.
+We never touch cards. Stripe Checkout sells the subscription on a hosted page, Stripe
+Billing renews it, the Customer Portal lets the user change card or cancel, and webhooks
+tell us the outcome. Our side is small: which plan a user is on, how many jobs and runs
+they used this month, and three thin endpoints (checkout, portal, webhook).
 
-Webhook contract (https://docs.lemonsqueezy.com/help/webhooks):
-- header `X-Signature`: HMAC-SHA256 of the raw body with the signing secret, hex;
-- `meta.event_name`: subscription_created / updated / cancelled / resumed / expired /
-  paused / unpaused / payment_success ...;
-- `meta.custom_data.user_id`: our user id, passed through the checkout URL;
-- `data.id`: the subscription id; `data.attributes`: status, variant_id, customer_id,
-  renews_at, ends_at, urls.customer_portal.
+What we read from Stripe:
+- `checkout.session.completed`: `client_reference_id` = our user id, `subscription`,
+  `customer`; the plan comes from the subscription's price id.
+- `customer.subscription.created|updated|deleted`: status, the price id of the first
+  item, the period end (`current_period_end` on the subscription or, on newer API
+  versions, on each item), `cancel_at_period_end`, `metadata.user_id`.
+Price ids map to plans through `STRIPE_PRICE_STARTER` / `STRIPE_PRICE_PRO`.
 """
-import hashlib
-import hmac
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from urllib.parse import quote
+from typing import Any
 
+import stripe
 from sqlalchemy.orm import Session
 
 from config.plans import FREE, PLANS, Plan
@@ -26,18 +26,28 @@ from config.variables import settings
 from db import db_crud
 from db.models_db.models_db import Subscription, User
 
-PROVIDER = "lemonsqueezy"
+PROVIDER = "stripe"
 # Provider statuses under which the plan's allowance applies. "cancelled" keeps the plan
 # until the paid period ends (checked separately); "expired", "unpaid", "paused" do not
 ENTITLED_STATUSES = {"active", "on_trial", "past_due"}
+# Stripe's vocabulary -> ours (kept from the first provider so the rest of the code and the
+# dashboard do not care who bills)
+STRIPE_STATUS = {
+    "active": "active", "trialing": "on_trial", "past_due": "past_due", "canceled": "cancelled",
+    "unpaid": "unpaid", "incomplete": "incomplete", "incomplete_expired": "expired", "paused": "paused",
+}
 
 
 class WebhookError(Exception):
     pass
 
 
+class BillingError(Exception):
+    pass
+
+
 def configured() -> bool:
-    return bool(settings.lemonsqueezy_webhook_secret)
+    return bool(settings.stripe_secret_key and settings.stripe_webhook_secret)
 
 
 def _now() -> datetime:
@@ -61,23 +71,13 @@ def plan_for(subscription: Subscription | None) -> Plan:
     return PLANS.get(settings.default_plan, FREE)
 
 
-def checkout_url(base: str | None, user: User) -> str | None:
-    """The hosted checkout, with the email prefilled and our user id as custom data, so the
-    webhook can tell us who bought."""
-    if not base:
-        return None
-    sep = "&" if "?" in base else "?"
-    return f"{base}{sep}checkout[email]={quote(user.email)}&checkout[custom][user_id]={user.id}"
-
-
 @dataclass
 class Usage:
     plan: Plan
     used_this_month: int
     status: str | None
     current_period_end: datetime | None
-    customer_portal_url: str | None
-
+    can_manage: bool  # a Stripe customer exists: the portal can be opened
     runs_this_month: int = 0
 
     @property
@@ -102,72 +102,162 @@ def usage_for(db: Session, user: User) -> Usage:
         runs_this_month=runs,
         status=subscription.status if subscription else None,
         current_period_end=_aware(subscription.current_period_end) if subscription else None,
-        customer_portal_url=subscription.customer_portal_url if subscription else None,
+        can_manage=bool(subscription and subscription.provider_customer_id and configured()),
     )
 
 
-# ----------------------------------------------------------------- webhook
+# ----------------------------------------------------------------- prices and plans
 
-def verify_signature(raw_body: bytes, signature: str | None) -> bool:
-    if not settings.lemonsqueezy_webhook_secret or not signature:
-        return False
-    expected = hmac.new(settings.lemonsqueezy_webhook_secret.encode(), raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature.strip().lower())
+def price_for(plan_code: str) -> str | None:
+    return {"starter": settings.stripe_price_starter, "pro": settings.stripe_price_pro}.get(plan_code) or None
 
 
-def _plan_for_variant(variant_id) -> str | None:
-    variant = str(variant_id) if variant_id is not None else None
-    if variant and variant == settings.lemonsqueezy_variant_starter:
+def _plan_for_price(price_id: str | None) -> str | None:
+    if not price_id:
+        return None
+    if price_id == settings.stripe_price_starter:
         return "starter"
-    if variant and variant == settings.lemonsqueezy_variant_pro:
+    if price_id == settings.stripe_price_pro:
         return "pro"
     return None
 
 
-def _parse_time(value) -> datetime | None:
+def _client() -> Any:
+    stripe.api_key = settings.stripe_secret_key
+    return stripe
+
+
+# ----------------------------------------------------------------- checkout and portal
+
+def create_checkout(db: Session, user: User, plan_code: str) -> str:
+    """A hosted Checkout page for `plan_code`; returns its URL. The user id travels as
+    `client_reference_id` and in the subscription's metadata, so the webhook can tell us
+    who bought even before we stored a customer id."""
+    if not configured():
+        raise BillingError("Billing is not configured on this server.")
+    price = price_for(plan_code)
+    if price is None:
+        raise BillingError(f"No Stripe price is configured for the {plan_code} plan.")
+    existing = db_crud.get_subscription(db, user.id)
+    params: dict[str, Any] = {
+        "mode": "subscription",
+        "line_items": [{"price": price, "quantity": 1}],
+        "success_url": f"{settings.app_url}/billing?checkout=success",
+        "cancel_url": f"{settings.app_url}/billing?checkout=cancelled",
+        "client_reference_id": str(user.id),
+        "subscription_data": {"metadata": {"user_id": str(user.id), "plan": plan_code}},
+        "allow_promotion_codes": True,
+    }
+    if settings.stripe_automatic_tax:
+        params["automatic_tax"] = {"enabled": True}
+        params["customer_update"] = {"address": "auto"}
+    if existing and existing.provider_customer_id:
+        params["customer"] = existing.provider_customer_id
+    else:
+        params["customer_email"] = user.email
+    session = _client().checkout.Session.create(**params)
+    return session.url
+
+
+def create_portal(db: Session, user: User) -> str:
+    """The Customer Portal (invoices, card, cancel). Needs a Stripe customer, which exists
+    once the first checkout completed."""
+    if not configured():
+        raise BillingError("Billing is not configured on this server.")
+    subscription = db_crud.get_subscription(db, user.id)
+    if subscription is None or not subscription.provider_customer_id:
+        raise BillingError("No subscription to manage yet.")
+    session = _client().billing_portal.Session.create(
+        customer=subscription.provider_customer_id, return_url=f"{settings.app_url}/billing",
+    )
+    return session.url
+
+
+# ----------------------------------------------------------------- webhook
+
+def construct_event(raw_body: bytes, signature: str | None) -> Any:
+    """Verify the `Stripe-Signature` header and parse the event; WebhookError otherwise."""
+    if not configured() or not signature:
+        raise WebhookError("missing signature")
+    try:
+        return stripe.Webhook.construct_event(raw_body, signature, settings.stripe_webhook_secret)
+    except (ValueError, stripe.error.SignatureVerificationError) as exc:  # type: ignore[attr-defined]
+        raise WebhookError(f"invalid signature: {exc.__class__.__name__}")
+
+
+def _get(obj: Any, key: str, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _period_end(sub: Any) -> datetime | None:
+    """`current_period_end` lives on the subscription (API versions before 2025-03) or on
+    each item (after). Either way a unix timestamp."""
+    value = _get(sub, "current_period_end")
     if not value:
-        return None
+        items = _get(_get(sub, "items", {}) or {}, "data", []) or []
+        if items:
+            value = _get(items[0], "current_period_end")
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def apply_webhook(db: Session, payload: dict) -> str:
-    """Update the user's subscription from a verified event. Returns a short outcome for
-    the log. Unknown events and variants are ignored (not errors): the provider sends more
-    kinds than we use, and a product we did not configure must not break the handler."""
-    meta = payload.get("meta") or {}
-    event = str(meta.get("event_name") or "")
-    if not event.startswith("subscription_"):
-        return f"ignored event {event or '?'}"
-    data = payload.get("data") or {}
-    attributes = data.get("attributes") or {}
-    user_id_raw = (meta.get("custom_data") or {}).get("user_id")
-    try:
-        user_id = uuid.UUID(str(user_id_raw))
+        return datetime.fromtimestamp(int(value), tz=timezone.utc) if value else None
     except (TypeError, ValueError):
-        raise WebhookError("custom_data.user_id missing or not a UUID")
+        return None
+
+
+def _price_id(sub: Any) -> str | None:
+    items = _get(_get(sub, "items", {}) or {}, "data", []) or []
+    if not items:
+        return None
+    price = _get(items[0], "price") or {}
+    return _get(price, "id")
+
+
+def _user_id_of(sub: Any, fallback: str | None = None) -> uuid.UUID:
+    raw = _get(_get(sub, "metadata", {}) or {}, "user_id") or fallback
+    try:
+        return uuid.UUID(str(raw))
+    except (TypeError, ValueError):
+        raise WebhookError("user_id missing from the subscription metadata")
+
+
+def _store(db: Session, user_id: uuid.UUID, sub: Any, event: str) -> str:
     if db_crud.get_user(db, user_id) is None:
         raise WebhookError(f"unknown user {user_id}")
-    plan = _plan_for_variant(attributes.get("variant_id"))
+    plan = _plan_for_price(_price_id(sub))
     if plan is None:
-        return f"ignored variant {attributes.get('variant_id')!r}"
-    subscription_id = str(data.get("id") or "")
-    if not subscription_id:
-        raise WebhookError("data.id missing")
-
-    status = str(attributes.get("status") or "active")
-    period_end = _parse_time(attributes.get("ends_at")) or _parse_time(attributes.get("renews_at"))
+        return f"ignored price {_price_id(sub)!r}"
+    raw_status = str(_get(sub, "status") or "active")
+    status = STRIPE_STATUS.get(raw_status, raw_status)
+    if _get(sub, "cancel_at_period_end") and status == "active":
+        status = "cancelled"  # keeps the plan until current_period_end (plan_for)
+    customer = _get(sub, "customer")
     db_crud.upsert_subscription(
         db,
         user_id=user_id,
         plan=plan,
         status=status,
         provider=PROVIDER,
-        provider_subscription_id=subscription_id,
-        provider_customer_id=str(attributes.get("customer_id") or "") or None,
-        customer_portal_url=(attributes.get("urls") or {}).get("customer_portal"),
-        current_period_end=period_end,
+        provider_subscription_id=str(_get(sub, "id")),
+        provider_customer_id=str(_get(customer, "id") if not isinstance(customer, str) else customer) or None,
+        customer_portal_url=None,
+        current_period_end=_period_end(sub),
     )
     return f"{event}: user {user_id} -> {plan} ({status})"
+
+
+def apply_event(db: Session, event: Any) -> str:
+    """Update the user's subscription from a verified event. Unknown events and prices are
+    ignored (200): Stripe sends many kinds, and a product we did not configure must not
+    break the handler."""
+    kind = str(_get(event, "type") or "")
+    obj = _get(_get(event, "data", {}) or {}, "object") or {}
+    if kind == "checkout.session.completed":
+        if _get(obj, "mode") != "subscription" or not _get(obj, "subscription"):
+            return "ignored checkout (not a subscription)"
+        sub_ref = _get(obj, "subscription")
+        sub = _client().Subscription.retrieve(sub_ref if isinstance(sub_ref, str) else _get(sub_ref, "id"))
+        return _store(db, _user_id_of(sub, _get(obj, "client_reference_id")), sub, kind)
+    if kind.startswith("customer.subscription."):
+        return _store(db, _user_id_of(obj), obj, kind)
+    return f"ignored event {kind or '?'}"
