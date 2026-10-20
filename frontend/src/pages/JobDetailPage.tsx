@@ -134,7 +134,7 @@ export function JobDetailPage() {
           <span className="sep">›</span>
           <span className="current">{hostOf(job.url)}</span>
         </nav>
-        <div className="page-head" style={{ marginTop: 'var(--space-2)', marginBottom: 'var(--space-4)' }}>
+        <div className="page-head" style={{ marginTop: 'var(--space-2)', marginBottom: 'var(--space-16)' }}>
           <div style={{ minWidth: 0 }}>
             <h1 className="section-title row" style={{ marginBottom: 'var(--space-1)' }}>
               {hostOf(job.url)} <StatusBadge status={job.status} />
@@ -182,7 +182,7 @@ export function JobDetailPage() {
       {job.status === 'failed' && <ErrorBox message={`The job failed: ${job.error ?? 'unknown reason'}`} />}
       {job.status === 'done' && job.error && <Notice variant="warning">{job.error}</Notice>}
 
-      <div style={{ display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(auto-fit, minmax(9rem, 1fr))', marginTop: 'var(--space-4)' }}>
+      <div style={{ display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(auto-fit, minmax(9rem, 1fr))', marginTop: 'var(--space-16)' }}>
         <Stat label="Pages" value={job.pages_crawled} />
         <Stat label="Scenarios" value={job.total_scenarios} />
         <Stat label="Language" value={LANGUAGE_NAMES[job.language] ?? job.language} small />
@@ -192,7 +192,7 @@ export function JobDetailPage() {
       </div>
 
       {(job.login_url || job.description) && (
-        <div className="muted" style={{ marginTop: 'var(--space-4)', fontSize: 14 }}>
+        <div className="muted" style={{ marginTop: 'var(--space-16)', fontSize: 14 }}>
           {job.login_url && (
             <p style={{ margin: '0 0 var(--space-1)' }}>
               <b style={{ color: 'var(--ink)' }}>Explored logged in</b> via{' '}
@@ -211,7 +211,7 @@ export function JobDetailPage() {
         </div>
       )}
 
-      <section style={{ marginTop: 'var(--space-8)' }}>
+      <section style={{ marginTop: 'var(--space-32)' }}>
         <div className="page-head" style={{ marginBottom: 'var(--space-3)' }}>
           <h2 className="section-title" style={{ margin: 0 }}>
             Pages explored ({pages.length})
@@ -273,7 +273,7 @@ export function JobDetailPage() {
         )}
       </section>
 
-      <section style={{ marginTop: 'var(--space-8)' }}>
+      <section style={{ marginTop: 'var(--space-32)' }}>
         <h2 className="section-title">Test scenarios ({scenarios.length})</h2>
         {scenarios.length === 0 ? (
           <p className="muted">{inProgress ? 'Scenarios appear as each page is designed.' : 'No scenarios.'}</p>

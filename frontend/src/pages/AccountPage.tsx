@@ -48,7 +48,7 @@ export function AccountPage() {
           )}
         </p>
         <div className="stat-label">Member since</div>
-        <p style={{ margin: '0 0 var(--space-4)' }}>{formatDate(user?.created_at ?? null)}</p>
+        <p style={{ margin: '0 0 var(--space-16)' }}>{formatDate(user?.created_at ?? null)}</p>
         <div className="row">
           <Link to="/billing" className="btn-secondary btn-sm">
             Plan and usage
@@ -63,7 +63,7 @@ export function AccountPage() {
         <h2 className="card-title" style={{ color: 'var(--ember)' }}>
           Delete account
         </h2>
-        <p className="muted" style={{ margin: '0 0 var(--space-4)' }}>
+        <p className="muted" style={{ margin: '0 0 var(--space-16)' }}>
           Deletes your account with every job, page, scenario and report. This cannot be undone. If you have a paid subscription, cancel it
           first from the Plan page: deleting the account here does not stop the billing.
         </p>
@@ -81,7 +81,7 @@ export function AccountPage() {
             <input id="confirm" required className="input" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} />
           </div>
           {error && (
-            <div style={{ marginTop: 'var(--space-4)' }}>
+            <div style={{ marginTop: 'var(--space-16)' }}>
               <ErrorBox message={error} />
             </div>
           )}

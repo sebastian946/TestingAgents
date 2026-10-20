@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { api, ApiError, type BillingInfo } from '../api'
@@ -13,9 +13,9 @@ const PLAN_FEATURES: Record<string, string[]> = {
 export function BillingPage() {
   const [info, setInfo] = useState<BillingInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
-  const [params] = useSearchParams()
-  const checkout = params.get('checkout')
+  const [params, setParams] = useSearchParams()
+  const wanted = params.get('plan')
+  const redirected = useRef(false)
 
   useEffect(() => {
     api
@@ -24,22 +24,23 @@ export function BillingPage() {
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load your plan.'))
   }, [])
 
-  async function goTo(action: 'portal' | string) {
-    setError(null)
-    setBusy(action)
-    try {
-      const { url } = action === 'portal' ? await api.portal() : await api.checkout(action)
+  // /billing?plan=starter (from the landing or the register page): go straight to the hosted
+  // checkout when it exists; otherwise fall through and explain why the button is missing
+  useEffect(() => {
+    if (!info || !wanted || redirected.current) return
+    const url = info.checkout_urls[wanted]
+    if (url && wanted !== info.plan.code) {
+      redirected.current = true
       window.location.assign(url)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not open the payment page.')
-      setBusy(null)
     }
-  }
+  }, [info, wanted])
 
-  if (error && !info) return <ErrorBox message={error} />
+  if (error) return <ErrorBox message={error} />
   if (!info) return <p className="muted">Loading…</p>
+  const wantedPlan = wanted ? info.plans.find((p) => p.code === wanted) : undefined
 
   const percent = Math.min(100, Math.round((info.used_this_month / info.plan.jobs_per_month) * 100))
+  const billingConfigured = Object.keys(info.checkout_urls).length > 0
 
   return (
     <div style={{ maxWidth: '56rem', margin: '0 auto' }}>
@@ -47,21 +48,29 @@ export function BillingPage() {
         <h1 className="page-title">Plan and usage</h1>
       </div>
 
-      {checkout === 'success' && (
+      {wantedPlan && wantedPlan.code === info.plan.code && (
         <div style={{ marginBottom: 'var(--space-16)' }}>
-          <Notice variant="success">
-            Thank you. Your plan updates as soon as Stripe confirms the payment, usually within a few seconds; refresh if you do not
-            see it yet.
+          <Notice variant="success">You are already on the {wantedPlan.name} plan.</Notice>
+        </div>
+      )}
+      {wantedPlan && wantedPlan.code !== info.plan.code && info.checkout_urls[wantedPlan.code] && (
+        <div style={{ marginBottom: 'var(--space-16)' }}>
+          <Notice variant="info">
+            Opening the payment page for {wantedPlan.name}…{' '}
+            <a href={info.checkout_urls[wantedPlan.code]}>Click here if it does not open.</a>
           </Notice>
         </div>
       )}
-      {checkout === 'cancelled' && (
+      {wantedPlan && wantedPlan.code !== info.plan.code && !info.checkout_urls[wantedPlan.code] && (
         <div style={{ marginBottom: 'var(--space-16)' }}>
-          <Notice variant="info">The checkout was cancelled. Nothing was charged.</Notice>
+          <Notice variant="warning">
+            Payments are not enabled on this server yet, so the {wantedPlan.name} plan cannot be purchased right now.{' '}
+            <button type="button" className="link" onClick={() => setParams({})}>
+              Dismiss
+            </button>
+          </Notice>
         </div>
       )}
-      <ErrorBox message={error} />
-
       <div className="card">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <div className="stat">
@@ -75,10 +84,10 @@ export function BillingPage() {
               )}
             </div>
           </div>
-          {info.can_manage && (
-            <button type="button" className="btn-secondary btn-sm" onClick={() => goTo('portal')} disabled={busy !== null}>
-              {busy === 'portal' ? 'Opening…' : 'Manage subscription'}
-            </button>
+          {info.customer_portal_url && (
+            <a href={info.customer_portal_url} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
+              Manage subscription
+            </a>
           )}
         </div>
         <p className="muted" style={{ margin: 'var(--space-12) 0 var(--space-8)' }}>
@@ -104,7 +113,7 @@ export function BillingPage() {
       <div style={{ display: 'grid', gap: 'var(--space-16)', gridTemplateColumns: 'repeat(auto-fit, minmax(14rem, 1fr))', marginTop: 'var(--space-24)' }}>
         {info.plans.map((plan) => {
           const current = plan.code === info.plan.code
-          const paid = plan.price_usd > 0
+          const checkout = info.checkout_urls[plan.code]
           return (
             <div key={plan.code} className={`card plan${current ? ' is-current' : ''}`}>
               {plan.code === 'starter' && !current && <span className="ribbon">Most popular</span>}
@@ -123,23 +132,17 @@ export function BillingPage() {
                 <button type="button" className="btn-secondary" style={{ marginTop: 'auto' }} disabled>
                   Current plan
                 </button>
-              ) : paid && info.payments_enabled ? (
-                <button
-                  type="button"
-                  className={plan.code === 'starter' ? 'btn-primary' : 'btn-outline'}
-                  style={{ marginTop: 'auto' }}
-                  onClick={() => goTo(plan.code)}
-                  disabled={busy !== null}
-                >
-                  {busy === plan.code ? 'Opening…' : plan.price_usd > info.plan.price_usd ? 'Upgrade' : 'Switch'}
-                </button>
-              ) : paid ? (
+              ) : checkout ? (
+                <a href={checkout} className={plan.code === 'starter' ? 'btn-primary' : 'btn-outline'} style={{ marginTop: 'auto' }}>
+                  {plan.price_usd > info.plan.price_usd ? 'Upgrade' : 'Switch'}
+                </a>
+              ) : plan.price_usd > 0 && !billingConfigured ? (
                 <p className="help" style={{ marginTop: 'auto' }}>
                   Payments are not enabled on this server yet.
                 </p>
-              ) : info.can_manage ? (
+              ) : info.customer_portal_url ? (
                 <p className="help" style={{ marginTop: 'auto' }}>
-                  Cancel from “Manage subscription” to return to Free.
+                  Change or cancel from “Manage subscription”.
                 </p>
               ) : null}
             </div>
@@ -147,7 +150,7 @@ export function BillingPage() {
         })}
       </div>
       <p className="help" style={{ marginTop: 'var(--space-24)' }}>
-        Payments are processed by Stripe. Your card details never reach our servers. Prices in USD; taxes may apply at checkout.
+        Payments are processed by Lemon Squeezy, which handles taxes and invoices. Your card details never reach our servers. Prices in USD.
       </p>
     </div>
   )

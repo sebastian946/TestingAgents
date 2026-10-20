@@ -38,7 +38,7 @@ export function ForgotPasswordPage() {
           </Notice>
         ) : (
           <form onSubmit={handleSubmit}>
-            <p className="muted" style={{ margin: '0 0 var(--space-4)' }}>
+            <p className="muted" style={{ margin: '0 0 var(--space-16)' }}>
               Enter your email and we will send you a link to choose a new password.
             </p>
             <div className="field">
@@ -48,7 +48,7 @@ export function ForgotPasswordPage() {
               <input id="email" type="email" required autoComplete="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
             {error && (
-              <div style={{ marginTop: 'var(--space-4)' }}>
+              <div style={{ marginTop: 'var(--space-16)' }}>
                 <ErrorBox message={error} />
               </div>
             )}
@@ -57,7 +57,7 @@ export function ForgotPasswordPage() {
             </button>
           </form>
         )}
-        <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+        <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-16)' }}>
           <Link to="/login">Back to log in</Link>
         </p>
       </div>

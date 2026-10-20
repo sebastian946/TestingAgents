@@ -71,9 +71,9 @@ export function NewJobPage() {
             <span className="counter">{description.length}/500</span>
           </div>
         </div>
-        <fieldset className="field" style={{ border: 0, padding: 0, margin: 'var(--space-4) 0 0' }}>
+        <fieldset className="field" style={{ border: 0, padding: 0, margin: 'var(--space-16) 0 0' }}>
           <legend className="label">Language of the scenarios and the report</legend>
-          <div className="row" style={{ gap: 'var(--space-4)' }}>
+          <div className="row" style={{ gap: 'var(--space-16)' }}>
             {(['en', 'es'] as Language[]).map((code) => (
               <label key={code} className="radio">
                 <input type="radio" name="language" value={code} checked={language === code} onChange={() => setLanguage(code)} />
@@ -96,7 +96,7 @@ export function NewJobPage() {
           </label>
         </div>
 
-        <fieldset className="field" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)', margin: 'var(--space-6) 0 0' }}>
+        <fieldset className="field" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-16)', margin: 'var(--space-6) 0 0' }}>
           <legend style={{ padding: '0 var(--space-1)' }}>
             <label className="check" style={{ fontWeight: 600 }}>
               <input type="checkbox" checked={withLogin} onChange={(e) => setWithLogin(e.target.checked)} />

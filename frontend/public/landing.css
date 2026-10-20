@@ -64,6 +64,11 @@ svg.i { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-widt
 .nav a { color: var(--ink-muted); font-weight: 500; font-size: 14px; height: 32px; display: inline-flex; align-items: center; padding: 0 var(--space-12); border-radius: var(--radius-pill); }
 .nav a:hover { color: var(--ink); background: var(--fill); text-decoration: none; }
 .spacer { flex: 1; }
+.who { gap: var(--space-8); max-width: 260px; }
+.who span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar { width: 24px; height: 24px; border-radius: var(--radius-full); background: var(--brand-soft); color: var(--brand-ink); display: grid; place-items: center; font-size: 11px; font-weight: 600; flex: none; }
+[hidden] { display: none !important; }
+@media (max-width: 640px) { .who span:last-child { display: none; } }
 
 .topbar { position: sticky; top: 0; background: var(--canvas); border-bottom: 1px solid var(--hairline); z-index: 2; }
 .topbar .wrap { display: flex; align-items: center; gap: var(--space-20); min-height: 64px; flex-wrap: wrap; padding-top: var(--space-8); padding-bottom: var(--space-8); }

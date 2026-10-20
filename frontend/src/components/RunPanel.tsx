@@ -77,7 +77,7 @@ export function RunPanel({ job, scenarios, billing }: { job: Job; scenarios: Sce
   const doneCount = current ? current.passed + current.failed + current.blocked : 0
 
   return (
-    <section style={{ marginTop: 'var(--space-8)' }}>
+    <section style={{ marginTop: 'var(--space-32)' }}>
       <div className="page-head" style={{ marginBottom: 'var(--space-3)' }}>
         <h2 className="section-title" style={{ margin: 0 }}>
           Automated run
@@ -107,7 +107,7 @@ export function RunPanel({ job, scenarios, billing }: { job: Job; scenarios: Sce
       <ErrorBox message={error} />
 
       {showForm && (
-        <form onSubmit={start} className="card stack" style={{ marginBottom: 'var(--space-4)' }}>
+        <form onSubmit={start} className="card stack" style={{ marginBottom: 'var(--space-16)' }}>
           <Notice variant="warning">
             The agent <b>acts on the site</b>: it fills forms, clicks buttons and submits. Only run it against a <b>test environment</b>. It never
             pays, deletes or cancels, even if a scenario says so.
@@ -195,7 +195,7 @@ export function RunPanel({ job, scenarios, billing }: { job: Job; scenarios: Sce
             </div>
           )}
           {current.results.length > 0 && (
-            <div style={{ marginTop: 'var(--space-4)' }}>
+            <div style={{ marginTop: 'var(--space-16)' }}>
               {current.results.map((r) => {
                 const s = scenarioById.get(r.scenario_id)
                 return (
