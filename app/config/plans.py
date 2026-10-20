@@ -18,8 +18,8 @@ class Plan:
 
 PLANS: dict[str, Plan] = {
     "free": Plan("free", "Free", jobs_per_month=3, price_usd=0),
-    "starter": Plan("starter", "Starter", jobs_per_month=30, price_usd=29),
-    "pro": Plan("pro", "Pro", jobs_per_month=150, price_usd=99),
+    "starter": Plan("starter", "Starter", jobs_per_month=10, price_usd=19),
+    "pro": Plan("pro", "Pro", jobs_per_month=40, price_usd=49),
 }
 
 FREE = PLANS["free"]

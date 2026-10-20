@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 import { api, ApiError, type Job } from '../api'
-import { ErrorBox, StatusBadge, duration, formatDate, hostOf } from '../components/ui'
+import { ErrorBox, LANGUAGE_NAMES, StatusBadge, duration, formatDate, hostOf } from '../components/ui'
 
 const REFRESH_MS = 4000
 
 export function JobsPage() {
   const [jobs, setJobs] = useState<Job[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const navigate = useNavigate()
 
   useEffect(() => {
     let cancelled = false
@@ -36,60 +37,69 @@ export function JobsPage() {
   }, [])
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Jobs</h1>
+    <div>
+      <div className="page-head">
+        <h1 className="page-title">Jobs</h1>
         <Link to="/new" className="btn-primary">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
           New job
         </Link>
       </div>
       <ErrorBox message={error} />
 
-      {jobs === null && !error && <p className="text-sm text-slate-500">Loading…</p>}
+      {jobs === null && !error && <p className="muted">Loading…</p>}
 
       {jobs?.length === 0 && (
-        <div className="card p-10 text-center">
-          <p className="font-medium">No jobs yet</p>
-          <p className="mt-1 text-sm text-slate-500">Give it a URL and the agents will explore the site and design test scenarios for every page.</p>
-          <Link to="/new" className="btn-primary mt-4">
+        <div className="card empty" style={{ maxWidth: '40rem', margin: '0 auto' }}>
+          <div className="glyph">
+            <svg viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18" />
+            </svg>
+          </div>
+          <h2 className="card-title">No jobs yet</h2>
+          <p>Paste a URL and our agents will explore up to 8 pages and write the test scenarios for you — in English or Spanish.</p>
+          <Link to="/new" className="btn-primary">
             Create your first job
           </Link>
         </div>
       )}
 
       {jobs && jobs.length > 0 && (
-        <div className="card overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500 dark:bg-slate-800/60">
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
               <tr>
-                <th className="px-4 py-2">Site</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2 text-right">Pages</th>
-                <th className="px-4 py-2 text-right">Scenarios</th>
-                <th className="px-4 py-2">Language</th>
-                <th className="px-4 py-2">Created</th>
-                <th className="px-4 py-2">Duration</th>
+                <th>Site</th>
+                <th>Status</th>
+                <th className="num">Pages</th>
+                <th className="num">Scenarios</th>
+                <th>Language</th>
+                <th>Created</th>
+                <th>Duration</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody>
               {jobs.map((job) => (
-                <tr key={job.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                  <td className="px-4 py-2">
-                    <Link to={`/job/${job.id}`} className="font-medium text-indigo-600 hover:underline">
+                <tr key={job.id} className="is-link" onClick={() => navigate(`/job/${job.id}`)}>
+                  <td>
+                    <Link to={`/job/${job.id}`} className="host" style={{ color: 'inherit' }} onClick={(e) => e.stopPropagation()}>
                       {hostOf(job.url)}
                     </Link>
-                    <p className="max-w-xs truncate text-xs text-slate-500" title={job.url}>
+                    <span className="url" title={job.url}>
                       {job.url}
-                    </p>
+                    </span>
                   </td>
-                  <td className="px-4 py-2">
+                  <td>
                     <StatusBadge status={job.status} />
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums">{job.pages_crawled}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{job.total_scenarios}</td>
-                  <td className="px-4 py-2 uppercase">{job.language}</td>
-                  <td className="px-4 py-2 whitespace-nowrap text-slate-500">{formatDate(job.created_at)}</td>
-                  <td className="px-4 py-2 tabular-nums text-slate-500">{duration(job.started_at, job.finished_at)}</td>
+                  <td className="num">{job.pages_crawled}</td>
+                  <td className="num">{job.total_scenarios}</td>
+                  <td className="meta">{LANGUAGE_NAMES[job.language] ?? job.language}</td>
+                  <td className="meta">{formatDate(job.created_at)}</td>
+                  <td className="meta">{duration(job.started_at, job.finished_at)}</td>
                 </tr>
               ))}
             </tbody>

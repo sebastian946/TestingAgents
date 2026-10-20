@@ -9,6 +9,8 @@ real browser, Claude designs test scenarios for every page, and you get an Excel
 
 *A real report: saucedemo.com, 8 scenarios, about 20 seconds and US$0.04 of LLM spend.*
 
+**Product:** [tests-wise.com](https://tests-wise.com) · dashboard at app.tests-wise.com
+
 **Stack:** FastAPI · PostgreSQL 16 · Redis 7 + RQ · Playwright (Chromium) · LangGraph ·
 Claude (official `anthropic` SDK, structured outputs) · openpyxl · LangSmith (optional) · uv · pytest ·
 React + Vite + TypeScript + Tailwind (dashboard)
@@ -120,13 +122,17 @@ Without an API key the API and the crawl still work, but every job fails in the 
 ### The dashboard
 
 The web UI (`frontend/`) is a React single-page app: sign up, create jobs, watch them run,
-browse the scenarios and download the report. In production it is built into the Caddy
-image and served at `https://DOMAIN/` next to the API. For development:
+browse the scenarios and download the report. It follows the **Tests Wise design system**
+(warm terracotta and amber on cream, Fraunces + Figtree + JetBrains Mono, light and dark):
+the tokens are CSS variables in `frontend/src/index.css`, the shared component classes live
+next to them, and the public landing (`frontend/public/landing.html`, bilingual EN/ES) plus the
+Terms and Privacy pages are static files that Caddy serves at `/`, `/terms` and `/privacy`.
+In production everything is built into the Caddy image next to the API. For development:
 
 ```bash
 cd frontend
 npm install
-npm run dev     # http://localhost:5173 (the API must be running on :8000)
+npm run dev     # http://localhost:5173/dashboard (the API must be running on :8000); the landing is /landing.html
 ```
 
 <details>

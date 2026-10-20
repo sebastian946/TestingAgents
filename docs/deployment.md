@@ -72,7 +72,7 @@ Set in `.env`:
 | `REDIS_PASSWORD` | `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `DOMAIN` | the hostname from step 2 |
 | `SENTRY_DSN`, `SENTRY_ENVIRONMENT=production` | error reports with the stack trace, by email, from sentry.io (free plan). Create a project of type FastAPI and copy its DSN |
-| `LEMONSQUEEZY_WEBHOOK_SECRET`, `LEMONSQUEEZY_VARIANT_STARTER`, `LEMONSQUEEZY_VARIANT_PRO`, `LEMONSQUEEZY_CHECKOUT_STARTER_URL`, `LEMONSQUEEZY_CHECKOUT_PRO_URL` | billing (ADR-09). In Lemon Squeezy: create a store, two subscription products (Starter US$29/month, Pro US$99/month), copy each variant id and its "Share" checkout URL, and add a webhook to `https://DOMAIN/billing/webhook/lemonsqueezy` with the subscription events and a signing secret. Without these, everyone stays on `DEFAULT_PLAN` and the dashboard says payments are not enabled |
+| `LEMONSQUEEZY_WEBHOOK_SECRET`, `LEMONSQUEEZY_VARIANT_STARTER`, `LEMONSQUEEZY_VARIANT_PRO`, `LEMONSQUEEZY_CHECKOUT_STARTER_URL`, `LEMONSQUEEZY_CHECKOUT_PRO_URL` | billing (ADR-09). In Lemon Squeezy: create a store, two subscription products (Starter US$19/month, Pro US$49/month), copy each variant id and its "Share" checkout URL, and add a webhook to `https://DOMAIN/billing/webhook/lemonsqueezy` with the subscription events and a signing secret. Without these, everyone stays on `DEFAULT_PLAN` and the dashboard says payments are not enabled |
 | `DEFAULT_PLAN` | `free` in production |
 | `RETENTION_DAYS` | `90`: finished jobs older than that are deleted with their files |
 | `CREDENTIALS_KEY` | `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`: encrypts the login credentials customers give for a job (deleted after the crawl). Without it, jobs with a login are refused |
@@ -93,7 +93,7 @@ curl https://api.example.com/Health
 
 The first build takes a few minutes (Chromium for the worker, `npm ci` for the dashboard).
 `ps` should show every service `healthy`; Caddy's log (`docker compose ... logs caddy`) shows
-the certificate being issued. Open `https://DOMAIN/` for the dashboard, `https://DOMAIN/docs`
+the certificate being issued. Open `https://DOMAIN/` for the landing, `https://DOMAIN/dashboard` for the app, `https://DOMAIN/docs`
 for the API.
 
 ### 5. Smoke test

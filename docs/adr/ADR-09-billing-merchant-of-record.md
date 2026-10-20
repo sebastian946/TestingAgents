@@ -26,8 +26,8 @@ The company is in Colombia and sells globally. That shapes the payment choice:
 **Lemon Squeezy as Merchant of Record. Plans are monthly job allowances. Our side is a
 `subscriptions` row per user, written only by signed webhooks.**
 
-- **Plans** (`config/plans.py`): Free 3 jobs/month, Starter 30 for US$29, Pro 150 for
-  US$99. Prices live at the provider; the code only needs the allowance. Accounts without
+- **Plans** (`config/plans.py`): Free 3 jobs/month, Starter 10 for US$19, Pro 40 for
+  US$49 (the numbers on the landing and the design system). Prices live at the provider; the code only needs the allowance. Accounts without
   a subscription are on `DEFAULT_PLAN` (free in production).
 - **Checkout is hosted** by the provider. The dashboard links to it with the user's email
   prefilled and our user id as custom data, so the webhook can tell us who bought. We

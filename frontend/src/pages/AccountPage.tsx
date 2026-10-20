@@ -33,49 +33,59 @@ export function AccountPage() {
   }
 
   return (
-    <div className="mx-auto max-w-xl space-y-6">
-      <h1 className="text-xl font-semibold">Account</h1>
-      <div className="card p-6 text-sm">
-        <p>
-          <span className="text-slate-500">Email: </span>
-          {user?.email} {user?.email_verified ? <span className="text-emerald-600">(verified)</span> : <span className="text-amber-600">(not verified)</span>}
+    <div style={{ maxWidth: '36rem', margin: '0 auto' }}>
+      <div className="page-head">
+        <h1 className="page-title">Account</h1>
+      </div>
+      <div className="card">
+        <div className="stat-label">Email</div>
+        <p style={{ margin: '0 0 var(--space-3)' }}>
+          {user?.email}{' '}
+          {user?.email_verified ? (
+            <span className="badge badge-done">verified</span>
+          ) : (
+            <span className="badge badge-running">not verified</span>
+          )}
         </p>
-        <p className="mt-1">
-          <span className="text-slate-500">Member since: </span>
-          {formatDate(user?.created_at ?? null)}
-        </p>
-        <p className="mt-3">
-          <Link to="/billing" className="text-indigo-600 hover:underline">
+        <div className="stat-label">Member since</div>
+        <p style={{ margin: '0 0 var(--space-4)' }}>{formatDate(user?.created_at ?? null)}</p>
+        <div className="row">
+          <Link to="/billing" className="btn-secondary btn-sm">
             Plan and usage
           </Link>
-          <span className="mx-2 text-slate-300">·</span>
-          <Link to="/forgot-password" className="text-indigo-600 hover:underline">
+          <Link to="/forgot-password" className="btn-ghost btn-sm">
             Change password
           </Link>
-        </p>
+        </div>
       </div>
 
-      <div className="card border-red-200 p-6 dark:border-red-900">
-        <h2 className="font-semibold text-red-700 dark:text-red-300">Delete account</h2>
-        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-          Deletes your account with every job, page, scenario and report. This cannot be undone. If you have a paid
-          subscription, cancel it first from the Plan page: deleting the account here does not stop the billing.
+      <div className="card" style={{ marginTop: 'var(--space-6)', borderColor: 'var(--status-failed-ink)' }}>
+        <h2 className="card-title" style={{ color: 'var(--status-failed-ink)' }}>
+          Delete account
+        </h2>
+        <p className="muted" style={{ margin: '0 0 var(--space-4)' }}>
+          Deletes your account with every job, page, scenario and report. This cannot be undone. If you have a paid subscription, cancel it
+          first from the Plan page: deleting the account here does not stop the billing.
         </p>
-        <form onSubmit={deleteAccount} className="mt-4 space-y-3">
-          <div>
+        <form onSubmit={deleteAccount}>
+          <div className="field">
             <label htmlFor="password" className="label">
               Your password
             </label>
             <input id="password" type="password" required autoComplete="current-password" className="input" value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
-          <div>
+          <div className="field">
             <label htmlFor="confirm" className="label">
               Type <b>DELETE</b> to confirm
             </label>
             <input id="confirm" required className="input" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} />
           </div>
-          <ErrorBox message={error} />
-          <button type="submit" className="btn-danger" disabled={busy}>
+          {error && (
+            <div style={{ marginTop: 'var(--space-4)' }}>
+              <ErrorBox message={error} />
+            </div>
+          )}
+          <button type="submit" className="btn-danger" style={{ marginTop: 'var(--space-6)' }} disabled={busy}>
             {busy ? 'Deleting…' : 'Delete my account'}
           </button>
         </form>

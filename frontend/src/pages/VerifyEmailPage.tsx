@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 
 import { api, ApiError, getToken } from '../api'
 import { useAuth } from '../auth'
+import { Logo } from '../components/Logo'
 
 /** /verify?token=…: the link from the verification email. Works logged in or not. */
 export function VerifyEmailPage() {
@@ -39,24 +40,28 @@ export function VerifyEmailPage() {
   }, [token])
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="card w-full max-w-sm p-6 text-center">
-        {state === 'working' && <p className="text-sm text-slate-500">Verifying your email…</p>}
+    <div className="auth-shell">
+      <div className={`card auth-card${state === 'ok' ? ' card-soft' : ''}`} style={{ textAlign: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 'var(--space-6)' }}>
+          <Logo to="/" />
+        </div>
+        {state === 'working' && <p className="muted">Verifying your email…</p>}
         {state === 'ok' && (
           <>
-            <p className="text-2xl">✅</p>
-            <h1 className="mt-2 text-lg font-semibold">Email verified</h1>
-            <p className="mt-1 text-sm text-slate-500">You can create jobs now.</p>
-            <Link to={user ? '/new' : '/login'} className="btn-primary mt-4">
+            <h1 className="card-title">Email verified</h1>
+            <p style={{ margin: '0 0 var(--space-6)' }}>You're all set. Create your first job and we'll start exploring.</p>
+            <Link to={user ? '/new' : '/login'} className="btn-primary">
               {user ? 'Create a job' : 'Log in'}
             </Link>
           </>
         )}
         {state === 'error' && (
           <>
-            <h1 className="text-lg font-semibold">Link not valid</h1>
-            <p className="mt-1 text-sm text-slate-500">{message}</p>
-            <Link to={user ? '/' : '/login'} className="btn-secondary mt-4">
+            <h1 className="card-title">Link not valid</h1>
+            <p className="muted" style={{ margin: '0 0 var(--space-6)' }}>
+              {message}
+            </p>
+            <Link to={user ? '/dashboard' : '/login'} className="btn-secondary">
               {user ? 'Request a new link from the dashboard' : 'Log in'}
             </Link>
           </>

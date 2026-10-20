@@ -1,40 +1,73 @@
-import type { JobStatus } from '../api'
+import type { ReactNode } from 'react'
 
-const STATUS_STYLES: Record<JobStatus, string> = {
-  queued: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
-  running: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  done: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-  failed: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
-}
+import type { JobStatus } from '../api'
 
 export function StatusBadge({ status }: { status: JobStatus }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLES[status]}`}>
-      {status === 'running' && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />}
+    <span className={`badge badge-${status}`}>
+      <span className="dot" />
       {status}
     </span>
   )
 }
 
-const PRIORITY_STYLES: Record<string, string> = {
-  critical: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
-  high: 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300',
-  medium: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  low: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
-}
+const PRIORITIES = new Set(['critical', 'high', 'medium', 'low'])
 
 export function PriorityBadge({ priority }: { priority: string | null }) {
   if (!priority) return null
-  const style = PRIORITY_STYLES[priority] ?? PRIORITY_STYLES.low
-  return <span className={`rounded px-2 py-0.5 text-xs font-medium ${style}`}>{priority}</span>
+  const level = PRIORITIES.has(priority) ? priority : 'low'
+  return (
+    <span className={`badge badge-priority badge-${level}`}>
+      <span className="dot" />
+      {priority}
+    </span>
+  )
 }
 
-export function ErrorBox({ message }: { message: string | null }) {
+export type NoticeVariant = 'warning' | 'error' | 'success' | 'info'
+
+const ICONS: Record<NoticeVariant, ReactNode> = {
+  warning: (
+    <svg viewBox="0 0 24 24">
+      <path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" />
+    </svg>
+  ),
+  error: (
+    <svg viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v4m0 4h.01" />
+    </svg>
+  ),
+  success: (
+    <svg viewBox="0 0 24 24">
+      <path d="M20 6L9 17l-5-5" />
+    </svg>
+  ),
+  info: (
+    <svg viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 16v-4m0-4h.01" />
+    </svg>
+  ),
+}
+
+/** Inline message: VerifyBanner, errors, the "Exploring…" progress, confirmations. */
+export function Notice({ variant, children, bar = false }: { variant: NoticeVariant; children: ReactNode; bar?: boolean }) {
+  return (
+    <div role={variant === 'error' ? 'alert' : 'status'} className={`notice notice-${variant}${bar ? ' notice-bar' : ''}`}>
+      {ICONS[variant]}
+      <span>{children}</span>
+    </div>
+  )
+}
+
+export function ErrorBox({ message, children }: { message: string | null; children?: ReactNode }) {
   if (!message) return null
   return (
-    <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+    <Notice variant="error">
       {message}
-    </div>
+      {children}
+    </Notice>
   )
 }
 
@@ -57,3 +90,5 @@ export function hostOf(url: string): string {
     return url
   }
 }
+
+export const LANGUAGE_NAMES: Record<string, string> = { en: 'English', es: 'Español' }

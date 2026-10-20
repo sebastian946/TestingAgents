@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 
 import { ApiError } from '../api'
 import { useAuth } from '../auth'
+import { Logo } from '../components/Logo'
 import { ErrorBox } from '../components/ui'
 
 /** /reset-password?token=…: the link from the reset email. Sets the password and logs in. */
@@ -26,7 +27,7 @@ export function ResetPasswordPage() {
     setBusy(true)
     try {
       await resetPassword(token, password)
-      navigate('/', { replace: true })
+      navigate('/dashboard', { replace: true })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not reset the password.')
     } finally {
@@ -35,36 +36,41 @@ export function ResetPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="card w-full max-w-sm p-6">
-        <h1 className="text-lg font-semibold">Choose a new password</h1>
+    <div className="auth-shell">
+      <div className="card auth-card">
+        <div style={{ marginBottom: 'var(--space-6)' }}>
+          <Logo to="/" />
+        </div>
+        <h1 className="card-title">Choose a new password</h1>
         {!token ? (
-          <p className="mt-3 text-sm text-slate-500">This link is missing its token. Request a new one from the log in page.</p>
+          <p className="muted">This link is missing its token. Request a new one from the log in page.</p>
         ) : (
-          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-            <div>
+          <form onSubmit={handleSubmit}>
+            <div className="field">
               <label htmlFor="password" className="label">
                 New password
               </label>
               <input id="password" type="password" required minLength={8} autoComplete="new-password" className="input" value={password} onChange={(e) => setPassword(e.target.value)} />
-              <p className="mt-1 text-xs text-slate-500">At least 8 characters.</p>
+              <div className="help">At least 8 characters.</div>
             </div>
-            <div>
+            <div className="field">
               <label htmlFor="confirm" className="label">
                 Repeat it
               </label>
               <input id="confirm" type="password" required minLength={8} autoComplete="new-password" className="input" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
             </div>
-            <ErrorBox message={error} />
-            <button type="submit" className="btn-primary w-full" disabled={busy}>
+            {error && (
+              <div style={{ marginTop: 'var(--space-4)' }}>
+                <ErrorBox message={error} />
+              </div>
+            )}
+            <button type="submit" className="btn-primary" style={{ width: '100%', marginTop: 'var(--space-6)' }} disabled={busy}>
               {busy ? 'Saving…' : 'Save and log in'}
             </button>
           </form>
         )}
-        <p className="mt-4 text-center text-sm text-slate-500">
-          <Link to="/login" className="font-medium text-indigo-600 hover:underline">
-            Back to log in
-          </Link>
+        <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+          <Link to="/login">Back to log in</Link>
         </p>
       </div>
     </div>
