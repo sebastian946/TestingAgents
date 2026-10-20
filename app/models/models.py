@@ -36,6 +36,34 @@ class UserRead(BaseModel):
         return data
 
 
+class PasswordConfirm(BaseModel):
+    """Body of DELETE /auth/me: the account's password, as a confirmation."""
+
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class PlanRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    name: str
+    jobs_per_month: int
+    price_usd: int
+
+
+class BillingInfo(BaseModel):
+    """GET /billing/me (WTA-30): the plan in force, this month's usage and how to upgrade."""
+
+    plan: PlanRead
+    used_this_month: int
+    remaining: int
+    status: str | None = Field(None, description="The provider's subscription status, if any")
+    current_period_end: datetime | None = None
+    customer_portal_url: str | None = Field(None, description="Where the user manages or cancels the subscription")
+    plans: list[PlanRead]
+    checkout_urls: dict[str, str] = Field(description="Hosted checkout per plan code, when billing is configured")
+
+
 class EmailRequest(BaseModel):
     """Body of POST /auth/password/forgot."""
 

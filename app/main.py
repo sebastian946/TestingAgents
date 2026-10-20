@@ -4,10 +4,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config.variables import settings
+from observability import init_sentry
 from routes.auth_routes import router as auth_router
+from routes.billing_routes import router as billing_router
 from routes.routes import router
 from security.auth import MIN_SECRET_LENGTH
 
+init_sentry("api")
 app = FastAPI(title="Testing Jobs")
 
 # "*" only works for local development: a browser refuses credentials with a wildcard
@@ -21,6 +24,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(billing_router)
 app.include_router(router)
 
 if not settings.auth_secret_key:

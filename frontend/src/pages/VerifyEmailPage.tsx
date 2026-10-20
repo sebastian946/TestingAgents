@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
 import { api, ApiError, getToken } from '../api'
@@ -11,30 +11,30 @@ export function VerifyEmailPage() {
   const { user, refresh } = useAuth()
   const [state, setState] = useState<'working' | 'ok' | 'error'>('working')
   const [message, setMessage] = useState('')
+  // The token is single-use: send it exactly once, even when React StrictMode (development)
+  // or a double click mounts the effect twice
+  const started = useRef(false)
 
   useEffect(() => {
+    if (started.current) return
+    started.current = true
     if (!token) {
       setState('error')
       setMessage('This link is missing its token.')
       return
     }
-    let cancelled = false
     api
       .verifyEmail(token)
       .then(async () => {
         // The page may have been opened fresh from the email: `user` is not loaded yet, but a
         // stored token means a session exists and its email_verified flag is now stale
         if (getToken()) await refresh().catch(() => undefined)
-        if (!cancelled) setState('ok')
+        setState('ok')
       })
       .catch((err) => {
-        if (cancelled) return
         setState('error')
         setMessage(err instanceof ApiError ? err.message : 'Could not verify the email.')
       })
-    return () => {
-      cancelled = true
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 

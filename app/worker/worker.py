@@ -8,6 +8,7 @@ API only through Postgres.
 """
 import os
 import sys
+import threading
 
 # Logs carry LLM output and page text (e.g. "→"). The Windows console defaults to cp1252,
 # which cannot encode them and makes logging print "--- Logging error ---" tracebacks
@@ -19,9 +20,28 @@ from redis.exceptions import RedisError  # noqa: E402
 from rq import SimpleWorker, Worker  # noqa: E402
 
 from config.variables import settings  # noqa: E402
+from observability import init_sentry  # noqa: E402
+from services.cleanup import purge_expired_jobs  # noqa: E402
 from db import db_crud  # noqa: E402
 from db.conn import local_session  # noqa: E402
 from db.redis.redis_conn import job_queue, redis_client  # noqa: E402
+
+
+RETENTION_INTERVAL_SECONDS = 6 * 3600
+
+
+def _retention_loop() -> None:
+    import time
+
+    while True:
+        try:
+            with local_session() as db:
+                purged = purge_expired_jobs(db, settings.reports_dir, settings.retention_days)
+            if purged:
+                print(f"Retention: deleted {purged} job(s) older than {settings.retention_days} days.", flush=True)
+        except Exception as exc:  # noqa: BLE001  never take the worker down for housekeeping
+            print(f"Retention sweep failed: {exc}", file=sys.stderr, flush=True)
+        time.sleep(RETENTION_INTERVAL_SECONDS)
 
 
 def main() -> int:
@@ -48,6 +68,11 @@ def main() -> int:
         cleared = db_crud.clear_stale_credentials(db)
     if cleared:
         print(f"Cleared login credentials of {cleared} finished or stale job(s).")
+    if init_sentry("worker"):
+        print("Sentry error reporting on.")
+    # WTA-30: data retention. Finished jobs older than RETENTION_DAYS are deleted with their
+    # files, now and then every 6 hours, from a thread that only touches the database
+    threading.Thread(target=_retention_loop, daemon=True, name="retention").start()
     print(f"Listening on RQ queue {settings.rq_queue_name!r}")
     worker_class = Worker if hasattr(os, "fork") else SimpleWorker
     worker = worker_class([job_queue], connection=redis_client)

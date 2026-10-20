@@ -39,7 +39,13 @@ services:
     restart: unless-stopped
     # Apply pending migrations, then serve (WTA-4). A fresh database gets every migration, an
     # existing one only what is new, so a fresh clone and an upgrade both work with no manual step
-    command: sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"
+    # --proxy-headers: behind Caddy the client address comes in X-Forwarded-For; the rate
+    # limiter keys on it (WTA-30). Only Caddy can reach this port in production
+    command: sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*'"
+    security_opt:
+      - no-new-privileges:true   # WTA-30: runs as `app` (Dockerfile) and can never escalate
+    cap_drop:
+      - ALL
     ports:
       - "8000:8000"
     volumes:
@@ -68,6 +74,12 @@ services:
     restart: unless-stopped
     init: true        # reaps zombie Chromium processes left behind by crashed tasks
     shm_size: 1gb     # Chromium crashes with Docker's default 64 MB of shared memory
+    # WTA-30: the browser visits third-party sites. Unprivileged user (Dockerfile), no
+    # capabilities, no privilege escalation: an exploit in Chromium stays in the container
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     volumes:
       - reports_data:/app/reports   # screenshots and reports survive container restarts
     env_file: ../.env

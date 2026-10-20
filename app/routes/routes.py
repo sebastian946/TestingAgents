@@ -15,6 +15,7 @@ from db.models_db.models_db import Job, JobStatus, User
 from db.redis.redis_conn import add_new_job_to_queue
 from models.models import JobCreate, JobRead, JobUsage, PageRead, ScenarioRead
 from security import credentials
+from services import billing, cleanup
 from security.auth import get_current_user, require_verified_email
 from security.ssrf import UnsafeURLError, validate_public_url
 
@@ -69,6 +70,19 @@ def create_job(payload: JobCreate, user: User = Depends(require_verified_email),
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="The login page must be on the same site as the URL under test.")
         encrypted = credentials.encrypt(credentials.LoginSpec(login_url, payload.login.username, payload.login.password))
+
+    # Monthly allowance of the plan (WTA-30, ADR-09): 402 with the numbers, so the dashboard
+    # can offer the upgrade. The hourly cap below stays as abuse protection
+    usage = billing.usage_for(db, user)
+    if usage.remaining <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "message": f"Your {usage.plan.name} plan includes {usage.plan.jobs_per_month} jobs per month and "
+                           f"you have used {usage.used_this_month}. Upgrade to keep testing.",
+                "plan": usage.plan.code, "used": usage.used_this_month, "limit": usage.plan.jobs_per_month,
+            },
+        )
 
     since = datetime.now(timezone.utc) - timedelta(hours=1)
     if db_crud.count_jobs_since(db, user.id, since) >= settings.auth_max_jobs_per_hour:
@@ -211,4 +225,4 @@ def download_report(job: Job = Depends(owned_job), db: Session = Depends(get_db)
     summary="Delete a job and its pages/scenarios",
 )
 def delete_job(job: Job = Depends(owned_job), db: Session = Depends(get_db)):
-    db_crud.delete_job(db, job.id)
+    cleanup.delete_job_completely(db, settings.reports_dir, job.id)  # rows and files (WTA-30)

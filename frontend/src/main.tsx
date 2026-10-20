@@ -6,6 +6,8 @@ import { AuthProvider, RequireAuth } from './auth'
 import { Layout } from './components/Layout'
 import './index.css'
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage'
+import { AccountPage } from './pages/AccountPage'
+import { BillingPage } from './pages/BillingPage'
 import { JobDetailPage } from './pages/JobDetailPage'
 import { JobsPage } from './pages/JobsPage'
 import { LoginPage } from './pages/LoginPage'
@@ -34,6 +36,8 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/" element={<JobsPage />} />
             <Route path="/new" element={<NewJobPage />} />
             <Route path="/job/:id" element={<JobDetailPage />} />
+            <Route path="/billing" element={<BillingPage />} />
+            <Route path="/account" element={<AccountPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

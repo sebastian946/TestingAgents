@@ -96,6 +96,24 @@ export interface Usage {
   by_model: { model: string; calls: number; cost_usd: number }[]
 }
 
+export interface Plan {
+  code: string
+  name: string
+  jobs_per_month: number
+  price_usd: number
+}
+
+export interface BillingInfo {
+  plan: Plan
+  used_this_month: number
+  remaining: number
+  status: string | null
+  current_period_end: string | null
+  customer_portal_url: string | null
+  plans: Plan[]
+  checkout_urls: Record<string, string>
+}
+
 export interface JobLogin {
   login_url?: string
   username: string
@@ -129,6 +147,8 @@ function messageFrom(status: number, body: unknown): string {
   const detail = (body as { detail?: unknown } | null)?.detail
   if (typeof detail === 'string') return detail
   if (detail && typeof detail === 'object' && 'message' in detail) return String((detail as { message: unknown }).message)
+  if (status === 402) return 'Your plan has no jobs left this month.'
+  if (status === 429) return 'Too many attempts. Please wait a moment and try again.'
   if (Array.isArray(detail)) {
     return detail.map((e: { loc?: unknown[]; msg?: string }) => `${e.loc?.at(-1) ?? 'field'}: ${e.msg ?? 'invalid'}`).join('; ')
   }
@@ -180,6 +200,8 @@ export const api = {
   verifyEmail: (token: string) => request<User>('POST', '/auth/verify', { token }),
   forgotPassword: (email: string) => request<{ detail: string }>('POST', '/auth/password/forgot', { email }),
   resetPassword: (token: string, password: string) => request<Token>('POST', '/auth/password/reset', { token, password }),
+  deleteAccount: (password: string) => request<void>('DELETE', '/auth/me', { password }),
+  billing: () => request<BillingInfo>('GET', '/billing/me'),
 
   listJobs: (limit = 50) => request<Job[]>('GET', `/jobs?limit=${limit}`),
   createJob: (payload: JobCreate) => request<Job>('POST', '/jobs', payload),

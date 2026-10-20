@@ -8,12 +8,16 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
+		# WTA-30: the dashboard loads nothing from other origins; inline styles are needed by
+		# Tailwind's runtime-less output in a few components, inline scripts never
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		-Server
 	}
 
 	# API routes go to uvicorn; everything else is the frontend (frontend/Dockerfile puts
 	# the Vite build in /srv). The SPA owns its routes, so unknown paths get index.html
-	@api path /auth/* /jobs /jobs/* /Health /docs /docs/* /openapi.json /redoc
+	@api path /auth/* /jobs /jobs/* /billing/* /Health /docs /docs/* /openapi.json /redoc
 	handle @api {
 		reverse_proxy api:8000
 	}

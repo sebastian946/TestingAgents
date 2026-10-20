@@ -19,12 +19,15 @@ export function Layout() {
             <NavLink to="/" end className={({ isActive }) => (isActive ? 'font-medium text-indigo-600' : 'text-slate-600 dark:text-slate-300')}>
               Jobs
             </NavLink>
+            <NavLink to="/billing" className={({ isActive }) => (isActive ? 'font-medium text-indigo-600' : 'text-slate-600 dark:text-slate-300')}>
+              Plan
+            </NavLink>
             <NavLink to="/new" className="btn-primary px-3 py-1.5">
               New job
             </NavLink>
-            <span className="hidden text-slate-500 sm:inline" title={user?.email}>
+            <NavLink to="/account" className="hidden text-slate-500 hover:text-slate-900 sm:inline dark:hover:text-white" title="Account settings">
               {user?.email}
-            </span>
+            </NavLink>
             <button
               type="button"
               className="text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"

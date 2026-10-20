@@ -41,6 +41,12 @@ def no_real_anthropic_api(monkeypatch):
     monkeypatch.setattr(settings, "designer_max_retries", 0)  # fail fast if a call slips through
     monkeypatch.setenv("ANTHROPIC_API_KEY", FAKE_ANTHROPIC_KEY)
     monkeypatch.setenv("ANTHROPIC_BASE_URL", DEAD_ANTHROPIC_URL)
+    # WTA-30: no test reaches Have I Been Pwned, and rate limits count in memory, per test
+    from security import ratelimit
+
+    monkeypatch.setattr(settings, "pwned_passwords_check", False)
+    monkeypatch.setattr(settings, "default_plan", "pro")  # tests create many jobs; billing tests set "free"
+    monkeypatch.setattr(ratelimit.limiter, "backend", ratelimit.MemoryBackend())
 
 
 # ------------------------------------------------------------------------ sample pages
