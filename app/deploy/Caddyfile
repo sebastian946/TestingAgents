@@ -8,9 +8,9 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
-		# WTA-30: the dashboard loads nothing from other origins; inline styles are needed by
-		# Tailwind's runtime-less output in a few components, inline scripts never
-		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		# WTA-30: nothing loads from other origins except the three Google Fonts (WTA-31);
+		# inline styles come from React's style props and Tailwind, inline scripts never
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		-Server
 	}
@@ -24,6 +24,12 @@
 
 	handle {
 		root * /srv
+		# The public pages are static files next to the SPA (WTA-31): the landing at the root,
+		# the legal pages, and /pricing as an anchor of the landing
+		redir /pricing /#pricing
+		rewrite / /landing.html
+		rewrite /terms /terms.html
+		rewrite /privacy /privacy.html
 		try_files {path} /index.html
 		file_server
 	}

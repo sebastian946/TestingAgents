@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { api, ApiError, type Job, type Page, type Scenario, type Usage } from '../api'
-import { ErrorBox, PriorityBadge, StatusBadge, duration, formatDate, hostOf } from '../components/ui'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { ErrorBox, LANGUAGE_NAMES, Notice, PriorityBadge, StatusBadge, duration, formatDate, hostOf } from '../components/ui'
 
 const REFRESH_MS = 3000
 
@@ -20,6 +21,8 @@ export function JobDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -59,52 +62,61 @@ export function JobDetailPage() {
   }
 
   async function remove() {
-    if (!window.confirm('Delete this job, its pages and its scenarios? This cannot be undone.')) return
     setActionError(null)
+    setDeleting(true)
     try {
       await api.deleteJob(id)
-      navigate('/')
+      navigate('/dashboard')
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : 'Could not delete the job.')
+      setConfirmDelete(false)
+    } finally {
+      setDeleting(false)
     }
   }
 
   if (error) {
     return (
-      <div className="space-y-4">
+      <div className="stack">
         <ErrorBox message={error} />
-        <Link to="/" className="btn-secondary">
+        <Link to="/dashboard" className="btn-secondary">
           Back to jobs
         </Link>
       </div>
     )
   }
-  if (!data) return <p className="text-sm text-slate-500">Loading…</p>
+  if (!data) return <p className="muted">Loading…</p>
 
   const { job, pages, scenarios, usage } = data
   const inProgress = job.status === 'queued' || job.status === 'running'
   const pageById = new Map(pages.map((p) => [p.id, p]))
 
   return (
-    <div className="space-y-6">
+    <div className="stack" style={{ gap: 0 }}>
       <div>
-        <Link to="/" className="text-sm text-slate-500 hover:underline">
+        <Link to="/dashboard" className="back-link">
           ← Jobs
         </Link>
-        <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="flex items-center gap-3 text-xl font-semibold">
+        <div className="page-head" style={{ marginTop: 'var(--space-2)', marginBottom: 'var(--space-4)' }}>
+          <div style={{ minWidth: 0 }}>
+            <h1 className="section-title row" style={{ marginBottom: 'var(--space-1)' }}>
               {hostOf(job.url)} <StatusBadge status={job.status} />
             </h1>
-            <a href={job.url} target="_blank" rel="noreferrer" className="block truncate text-sm text-slate-500 hover:underline">
+            <a href={job.url} target="_blank" rel="noreferrer" className="tw-mono muted" style={{ fontSize: 13, wordBreak: 'break-all' }}>
               {job.url}
             </a>
           </div>
-          <div className="flex gap-2">
+          <div className="row">
             <button type="button" className="btn-primary" onClick={download} disabled={job.status !== 'done' || downloading}>
+              <svg viewBox="0 0 24 24">
+                <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+              </svg>
               {downloading ? 'Preparing…' : 'Download Excel report'}
             </button>
-            <button type="button" className="btn-danger" onClick={remove} disabled={inProgress}>
+            <button type="button" className="btn-danger" onClick={() => setConfirmDelete(true)} disabled={inProgress}>
+              <svg viewBox="0 0 24 24">
+                <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+              </svg>
               Delete
             </button>
           </div>
@@ -113,67 +125,75 @@ export function JobDetailPage() {
       </div>
 
       {inProgress && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          {job.status === 'queued' ? 'Waiting for a worker…' : `Exploring and designing… ${job.pages_crawled} pages, ${job.total_scenarios} scenarios so far.`}{' '}
+        <Notice variant="warning">
+          {job.status === 'queued' ? (
+            'Waiting for a worker…'
+          ) : (
+            <>
+              Exploring… <b>{job.pages_crawled} pages, {job.total_scenarios} scenarios</b> so far.
+            </>
+          )}{' '}
           This page refreshes by itself.
-        </div>
+        </Notice>
       )}
       {job.status === 'failed' && <ErrorBox message={`The job failed: ${job.error ?? 'unknown reason'}`} />}
-      {job.status === 'done' && job.error && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          {job.error}
+      {job.status === 'done' && job.error && <Notice variant="warning">{job.error}</Notice>}
+
+      <div style={{ display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(auto-fit, minmax(9rem, 1fr))', marginTop: 'var(--space-4)' }}>
+        <Stat label="Pages" value={job.pages_crawled} />
+        <Stat label="Scenarios" value={job.total_scenarios} />
+        <Stat label="Language" value={LANGUAGE_NAMES[job.language] ?? job.language} small />
+        <Stat label="Duration" value={duration(job.started_at, job.finished_at)} small />
+        <Stat label="Created" value={formatDate(job.created_at)} small />
+        <Stat label="LLM cost" value={usage ? `$${usage.cost_usd.toFixed(3)}` : '—'} hint={usage ? `${usage.calls} calls` : undefined} mono />
+      </div>
+
+      {(job.login_url || job.description) && (
+        <div className="muted" style={{ marginTop: 'var(--space-4)', fontSize: 14 }}>
+          {job.login_url && (
+            <p style={{ margin: '0 0 var(--space-1)' }}>
+              <b style={{ color: 'var(--ink)' }}>Explored logged in</b> via{' '}
+              <a href={job.login_url} target="_blank" rel="noreferrer">
+                {job.login_url}
+              </a>
+              . The credentials were deleted when the exploration ended.
+            </p>
+          )}
+          {job.description && (
+            <p style={{ margin: 0 }}>
+              <b style={{ color: 'var(--ink)' }}>Description: </b>
+              {job.description}
+            </p>
+          )}
         </div>
       )}
 
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-        <Stat label="Pages" value={job.pages_crawled} />
-        <Stat label="Scenarios" value={job.total_scenarios} />
-        <Stat label="Language" value={job.language.toUpperCase()} />
-        <Stat label="Duration" value={duration(job.started_at, job.finished_at)} />
-        <Stat label="Created" value={formatDate(job.created_at)} small />
-        <Stat label="LLM cost" value={usage ? `US$${usage.cost_usd.toFixed(4)}` : '—'} hint={usage ? `${usage.calls} calls` : undefined} />
-      </dl>
-
-      {job.login_url && (
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          <span className="font-medium">Explored logged in</span> via{' '}
-          <a href={job.login_url} target="_blank" rel="noreferrer" className="underline">
-            {job.login_url}
-          </a>
-          . The credentials were deleted when the exploration ended.
-        </p>
-      )}
-      {job.description && (
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          <span className="font-medium">Description: </span>
-          {job.description}
-        </p>
-      )}
-
-      <section>
-        <h2 className="mb-2 text-base font-semibold">Pages explored ({pages.length})</h2>
+      <section style={{ marginTop: 'var(--space-8)' }}>
+        <h2 className="section-title">Pages explored ({pages.length})</h2>
         {pages.length === 0 ? (
-          <p className="text-sm text-slate-500">No pages yet.</p>
+          <p className="muted">No pages yet.</p>
         ) : (
-          <div className="card overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500 dark:bg-slate-800/60">
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
                 <tr>
-                  <th className="px-4 py-2">URL</th>
-                  <th className="px-4 py-2">Title</th>
-                  <th className="px-4 py-2">Type</th>
-                  <th className="px-4 py-2 text-right">Scenarios</th>
+                  <th>URL</th>
+                  <th>Title</th>
+                  <th>Type</th>
+                  <th className="num">Scenarios</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              <tbody>
                 {pages.map((page) => (
                   <tr key={page.id}>
-                    <td className="max-w-md truncate px-4 py-2" title={page.url}>
-                      {page.url}
+                    <td>
+                      <span className="url" title={page.url}>
+                        {page.url}
+                      </span>
                     </td>
-                    <td className="px-4 py-2">{page.title ?? '—'}</td>
-                    <td className="px-4 py-2">{page.page_type ?? '—'}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{scenarios.filter((s) => s.page_id === page.id).length}</td>
+                    <td>{page.title ?? '—'}</td>
+                    <td className="meta">{page.page_type ?? '—'}</td>
+                    <td className="num">{scenarios.filter((s) => s.page_id === page.id).length}</td>
                   </tr>
                 ))}
               </tbody>
@@ -182,36 +202,35 @@ export function JobDetailPage() {
         )}
       </section>
 
-      <section>
-        <h2 className="mb-2 text-base font-semibold">Test scenarios ({scenarios.length})</h2>
+      <section style={{ marginTop: 'var(--space-8)' }}>
+        <h2 className="section-title">Test scenarios ({scenarios.length})</h2>
         {scenarios.length === 0 ? (
-          <p className="text-sm text-slate-500">{inProgress ? 'Scenarios appear as each page is designed.' : 'No scenarios.'}</p>
+          <p className="muted">{inProgress ? 'Scenarios appear as each page is designed.' : 'No scenarios.'}</p>
         ) : (
-          <div className="space-y-2">
+          <div>
             {scenarios.map((s) => (
-              <details key={s.id} className="card group px-4 py-3">
-                <summary className="flex cursor-pointer list-none flex-wrap items-center gap-3">
-                  <span className="font-mono text-xs text-slate-500">{s.scenario_code}</span>
-                  <span className="flex-1 font-medium">{s.title}</span>
+              <details key={s.id} className="scenario">
+                <summary>
+                  <span className="code">{s.scenario_code}</span>
+                  <span className="title">{s.title}</span>
                   <PriorityBadge priority={s.priority} />
-                  {s.category && <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">{s.category}</span>}
-                  <span className="text-xs text-slate-400 transition group-open:rotate-90">▶</span>
+                  {s.category && <span className="chip">{s.category}</span>}
                 </summary>
-                <div className="mt-3 grid gap-4 text-sm sm:grid-cols-2">
+                <div className="scenario-body">
                   <div>
-                    <p className="mb-1 text-xs font-medium uppercase text-slate-500">Steps</p>
-                    <ol className="list-decimal space-y-1 pl-5">
+                    <h4>Steps</h4>
+                    <ol>
                       {s.steps.map((step, i) => (
                         <li key={i}>{String(step)}</li>
                       ))}
                     </ol>
                   </div>
                   <div>
-                    <p className="mb-1 text-xs font-medium uppercase text-slate-500">Expected result</p>
-                    <p>{s.expected_result}</p>
-                    <p className="mt-2 truncate text-xs text-slate-400" title={pageById.get(s.page_id)?.url}>
+                    <h4>Expected result</h4>
+                    <p style={{ margin: 0 }}>{s.expected_result}</p>
+                    <span className="url" title={pageById.get(s.page_id)?.url}>
                       {pageById.get(s.page_id)?.url}
-                    </p>
+                    </span>
                   </div>
                 </div>
               </details>
@@ -219,16 +238,21 @@ export function JobDetailPage() {
           </div>
         )}
       </section>
+
+      <ConfirmDialog open={confirmDelete} title="Delete this job?" confirmLabel="Delete job" busy={deleting} onConfirm={remove} onCancel={() => setConfirmDelete(false)}>
+        The report for <b style={{ color: 'var(--ink)' }}>{hostOf(job.url)}</b> and its {job.total_scenarios} scenarios will be removed. This cannot be
+        undone.
+      </ConfirmDialog>
     </div>
   )
 }
 
-function Stat({ label, value, hint, small }: { label: string; value: string | number; hint?: string; small?: boolean }) {
+function Stat({ label, value, hint, small, mono }: { label: string; value: string | number; hint?: string; small?: boolean; mono?: boolean }) {
   return (
-    <div className="card px-4 py-3">
-      <dt className="text-xs uppercase text-slate-500">{label}</dt>
-      <dd className={`${small ? 'text-sm' : 'text-lg'} font-semibold tabular-nums`}>{value}</dd>
-      {hint && <dd className="text-xs text-slate-400">{hint}</dd>}
+    <div className="stat">
+      <div className="stat-label">{label}</div>
+      <div className={`stat-value${small ? ' is-small' : ''}${mono ? ' tw-mono' : ''}`}>{value}</div>
+      {hint && <div className="stat-hint">{hint}</div>}
     </div>
   )
 }

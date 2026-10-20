@@ -2,24 +2,27 @@ import { useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 
 import { ApiError } from '../api'
+import { Logo } from '../components/Logo'
 import { ErrorBox } from '../components/ui'
 
 interface Props {
   title: string
+  subtitle: string
   submitLabel: string
   onSubmit: (email: string, password: string) => Promise<void>
   footer: { text: string; linkText: string; to: string }
 }
 
 /** The one form behind /login and /register: they differ only in the call they make. */
-export function AuthForm({ title, submitLabel, onSubmit, footer }: Props) {
+export function AuthForm({ title, subtitle, submitLabel, onSubmit, footer }: Props) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
-  const from = (location.state as { from?: string } | null)?.from ?? '/'
+  const from = (location.state as { from?: string } | null)?.from ?? '/dashboard'
+  const isLogin = submitLabel === 'Log in'
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -36,23 +39,23 @@ export function AuthForm({ title, submitLabel, onSubmit, footer }: Props) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="card w-full max-w-sm p-6">
-        <div className="mb-6 flex items-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-md bg-indigo-600 text-white">✓</span>
-          <div>
-            <p className="text-xs text-slate-500">Testing Agents</p>
-            <h1 className="text-lg font-semibold">{title}</h1>
-          </div>
+    <div className="auth-shell">
+      <div className="card auth-card">
+        <div style={{ marginBottom: 'var(--space-6)' }}>
+          <Logo to="/" />
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
+        <h1 className="card-title">{title}</h1>
+        <p className="muted" style={{ margin: '0 0 var(--space-4)' }}>
+          {subtitle}
+        </p>
+        <form onSubmit={handleSubmit}>
+          <div className="field">
             <label htmlFor="email" className="label">
               Email
             </label>
             <input id="email" type="email" required autoComplete="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
-          <div>
+          <div className="field">
             <label htmlFor="password" className="label">
               Password
             </label>
@@ -61,32 +64,36 @@ export function AuthForm({ title, submitLabel, onSubmit, footer }: Props) {
               type="password"
               required
               minLength={8}
-              autoComplete={submitLabel === 'Log in' ? 'current-password' : 'new-password'}
+              autoComplete={isLogin ? 'current-password' : 'new-password'}
               className="input"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            {submitLabel !== 'Log in' ? (
-              <p className="mt-1 text-xs text-slate-500">At least 8 characters.</p>
+            {isLogin ? (
+              <div className="help" style={{ textAlign: 'right' }}>
+                <Link to="/forgot-password">Forgot your password?</Link>
+              </div>
             ) : (
-              <p className="mt-1 text-right text-xs">
-                <Link to="/forgot-password" className="text-indigo-600 hover:underline">
-                  Forgot your password?
-                </Link>
-              </p>
+              <div className="help">At least 8 characters.</div>
             )}
           </div>
-          <ErrorBox message={error} />
-          <button type="submit" className="btn-primary w-full" disabled={busy}>
+          {error && (
+            <div style={{ marginTop: 'var(--space-4)' }}>
+              <ErrorBox message={error} />
+            </div>
+          )}
+          <button type="submit" className="btn-primary" style={{ width: '100%', marginTop: 'var(--space-6)' }} disabled={busy}>
             {busy ? 'Please wait…' : submitLabel}
           </button>
         </form>
-        <p className="mt-4 text-center text-sm text-slate-500">
-          {footer.text}{' '}
-          <Link to={footer.to} className="font-medium text-indigo-600 hover:underline">
-            {footer.linkText}
-          </Link>
+        <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+          {footer.text} <Link to={footer.to}>{footer.linkText}</Link>
         </p>
+        {!isLogin && (
+          <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-2)' }}>
+            By creating an account you agree to the <a href="/terms">Terms</a> and the <a href="/privacy">Privacy policy</a>.
+          </p>
+        )}
       </div>
     </div>
   )

@@ -21,10 +21,19 @@ updates:
     directory: "/app"
     schedule:
       interval: "weekly"
+    ignore:
+      # The project is tested on Python 3.12 (pyproject, uv.lock); a major/minor bump of the
+      # base image is a deliberate upgrade, not a dependency update
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: "docker"
     directory: "/frontend"
     schedule:
       interval: "weekly"
+    ignore:
+      # The frontend build is tested on an LTS Node; a major bump is a deliberate upgrade
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

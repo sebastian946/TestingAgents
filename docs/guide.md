@@ -387,7 +387,7 @@ Not supported: 2FA, captchas, social login. Ask the customer for a test account 
 
 ### Plans and billing (WTA-30)
 
-Plans are monthly job allowances (`config/plans.py`: Free 3, Starter 30, Pro 150). `GET
+Plans are monthly job allowances (`config/plans.py`: Free 3, Starter 10 for US$19, Pro 40 for US$49). `GET
 /billing/me` returns the plan in force, the jobs used this calendar month, the remaining
 allowance, the provider's status, and the hosted checkout links (with the user's email and
 id prefilled). `POST /jobs` answers `402` with `{message, plan, used, limit}` past the

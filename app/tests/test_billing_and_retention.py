@@ -105,7 +105,7 @@ def test_a_signed_webhook_upgrades_the_account(client):
     assert response.status_code == 200 and "-> pro (active)" in response.json()["detail"]
 
     info = client.get("/billing/me").json()
-    assert info["plan"]["code"] == "pro" and info["remaining"] == 150 and info["status"] == "active"
+    assert info["plan"]["code"] == "pro" and info["remaining"] == 40 and info["status"] == "active"
     assert info["customer_portal_url"] == "https://portal.example/sub-1"
     assert info["current_period_end"].startswith("2026-11-19")
     for _ in range(4):  # past the free limit now

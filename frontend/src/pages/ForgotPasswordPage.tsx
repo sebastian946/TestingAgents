@@ -2,7 +2,8 @@ import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 
 import { api, ApiError } from '../api'
-import { ErrorBox } from '../components/ui'
+import { Logo } from '../components/Logo'
+import { ErrorBox, Notice } from '../components/ui'
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -25,32 +26,39 @@ export function ForgotPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="card w-full max-w-sm p-6">
-        <h1 className="text-lg font-semibold">Reset your password</h1>
+    <div className="auth-shell">
+      <div className="card auth-card">
+        <div style={{ marginBottom: 'var(--space-6)' }}>
+          <Logo to="/" />
+        </div>
+        <h1 className="card-title">Reset your password</h1>
         {sent ? (
-          <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+          <Notice variant="success">
             If <b>{email}</b> has an account, a reset link is on its way. It works for a limited time.
-          </p>
+          </Notice>
         ) : (
-          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-            <p className="text-sm text-slate-500">Enter your email and we will send you a link to choose a new password.</p>
-            <div>
+          <form onSubmit={handleSubmit}>
+            <p className="muted" style={{ margin: '0 0 var(--space-4)' }}>
+              Enter your email and we will send you a link to choose a new password.
+            </p>
+            <div className="field">
               <label htmlFor="email" className="label">
                 Email
               </label>
               <input id="email" type="email" required autoComplete="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
-            <ErrorBox message={error} />
-            <button type="submit" className="btn-primary w-full" disabled={busy}>
+            {error && (
+              <div style={{ marginTop: 'var(--space-4)' }}>
+                <ErrorBox message={error} />
+              </div>
+            )}
+            <button type="submit" className="btn-primary" style={{ width: '100%', marginTop: 'var(--space-6)' }} disabled={busy}>
               {busy ? 'Sending…' : 'Send reset link'}
             </button>
           </form>
         )}
-        <p className="mt-4 text-center text-sm text-slate-500">
-          <Link to="/login" className="font-medium text-indigo-600 hover:underline">
-            Back to log in
-          </Link>
+        <p className="help" style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+          <Link to="/login">Back to log in</Link>
         </p>
       </div>
     </div>

@@ -24,19 +24,21 @@ export function VerifyBanner() {
   }
 
   return (
-    <div className="border-b border-amber-200 bg-amber-50 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-2">
-        <span>
-          Confirm your email (<b>{user.email}</b>) to start creating jobs: check your inbox for the link.
-        </span>
+    <div className="notice notice-warning notice-bar" role="status">
+      <svg viewBox="0 0 24 24">
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <path d="M3 7l9 6 9-6" />
+      </svg>
+      <span>
+        Confirm your email (<b>{user.email}</b>) to start creating jobs: check your inbox for the link.{' '}
         {state === 'sent' || state === 'error' ? (
-          <span>{message}</span>
+          message
         ) : (
-          <button type="button" className="font-medium underline" onClick={resend} disabled={state === 'sending'}>
+          <button type="button" className="link" onClick={resend} disabled={state === 'sending'}>
             {state === 'sending' ? 'Sending…' : 'Send the link again'}
           </button>
         )}
-      </div>
+      </span>
     </div>
   )
 }

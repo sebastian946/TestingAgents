@@ -1,50 +1,66 @@
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 
 import { useAuth } from '../auth'
+import { Logo } from './Logo'
 import { VerifyBanner } from './VerifyBanner'
 
 export function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
-          <Link to="/" className="flex items-center gap-2 font-semibold">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-indigo-600 text-white">✓</span>
-            Testing Agents
-          </Link>
-          <nav className="flex items-center gap-3 text-sm">
-            <NavLink to="/" end className={({ isActive }) => (isActive ? 'font-medium text-indigo-600' : 'text-slate-600 dark:text-slate-300')}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <header className={`header${open ? ' is-open' : ''}`}>
+        <div className="header-inner">
+          <Logo />
+          <nav className="nav" aria-label="Main">
+            <NavLink to="/dashboard" end className={({ isActive }) => (isActive ? 'is-active' : undefined)} onClick={() => setOpen(false)}>
               Jobs
             </NavLink>
-            <NavLink to="/billing" className={({ isActive }) => (isActive ? 'font-medium text-indigo-600' : 'text-slate-600 dark:text-slate-300')}>
+            <NavLink to="/billing" className={({ isActive }) => (isActive ? 'is-active' : undefined)} onClick={() => setOpen(false)}>
               Plan
             </NavLink>
-            <NavLink to="/new" className="btn-primary px-3 py-1.5">
-              New job
-            </NavLink>
-            <NavLink to="/account" className="hidden text-slate-500 hover:text-slate-900 sm:inline dark:hover:text-white" title="Account settings">
-              {user?.email}
-            </NavLink>
-            <button
-              type="button"
-              className="text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
-              onClick={() => {
-                logout()
-                navigate('/login')
-              }}
-            >
-              Log out
-            </button>
           </nav>
+          <span className="spacer" />
+          <NavLink to="/new" className="btn-primary btn-sm">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            New job
+          </NavLink>
+          <NavLink to="/account" className="user-email" title="Account settings" onClick={() => setOpen(false)}>
+            {user?.email}
+          </NavLink>
+          <button
+            type="button"
+            className="btn-ghost btn-sm"
+            onClick={() => {
+              logout()
+              navigate('/login')
+            }}
+          >
+            Log out
+          </button>
+          <button type="button" className="btn-ghost btn-sm menu-toggle" aria-expanded={open} aria-label="Menu" onClick={() => setOpen((v) => !v)}>
+            <svg viewBox="0 0 24 24">
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
         </div>
       </header>
       <VerifyBanner />
-      <main className="mx-auto max-w-6xl px-4 py-6">
+      <main className="page" style={{ flex: 1, width: '100%' }}>
         <Outlet />
       </main>
+      <footer className="site-footer">
+        <span>© {new Date().getFullYear()} Tests Wise</span>
+        <span className="spacer" />
+        <a href="/terms">Terms</a>
+        <a href="/privacy">Privacy</a>
+        <a href="mailto:hola@tests-wise.com">hola@tests-wise.com</a>
+      </footer>
     </div>
   )
 }

@@ -147,7 +147,7 @@ function messageFrom(status: number, body: unknown): string {
   const detail = (body as { detail?: unknown } | null)?.detail
   if (typeof detail === 'string') return detail
   if (detail && typeof detail === 'object' && 'message' in detail) return String((detail as { message: unknown }).message)
-  if (status === 402) return 'Your plan has no jobs left this month.'
+  if (status === 402) return 'Your plan has used all its jobs this month.'
   if (status === 429) return 'Too many attempts. Please wait a moment and try again.'
   if (Array.isArray(detail)) {
     return detail.map((e: { loc?: unknown[]; msg?: string }) => `${e.loc?.at(-1) ?? 'field'}: ${e.msg ?? 'invalid'}`).join('; ')
