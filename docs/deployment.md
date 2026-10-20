@@ -114,7 +114,7 @@ first with **Test mode** on (toggle in the left sidebar), then again in live mod
    bought.
 4. **Webhook**: Settings > Webhooks > Add endpoint. URL
    `https://app.tests-wise.com/billing/webhook/lemonsqueezy`, a long random signing
-   secret (`python3 -c "import secrets; print(secrets.token_urlsafe(32))"`) into
+   secret of at most 40 characters (`python3 -c "import secrets; print(secrets.token_hex(20))"`) into
    `LEMONSQUEEZY_WEBHOOK_SECRET`, events `subscription_created`, `subscription_updated`,
    `subscription_cancelled`, `subscription_resumed`, `subscription_expired`,
    `subscription_paused`, `subscription_unpaused`, `subscription_payment_failed`,
