@@ -137,6 +137,23 @@ first with **Test mode** on (toggle in the left sidebar), then again in live mod
    per mode) and complete the store verification Lemon Squeezy asks for before the
    first payout.
 
+### 4c. Go live: domain, search engines, link previews
+
+- **Root domain**: `app.tests-wise.com` is the site; make `tests-wise.com` and `www` reach it.
+  In Squarespace Domains > the domain > Forwarding: forward `tests-wise.com` to
+  `https://app.tests-wise.com`, permanent (301), "forward path" on. No server change.
+- **Search engines**: the landing ships `robots.txt` (private SPA routes disallowed),
+  `sitemap.xml`, canonical links, Open Graph / Twitter tags with `og-image.png` and a
+  JSON-LD `SoftwareApplication` block (`frontend/public/`). The SPA's `index.html` is
+  `noindex`. After deploying: Google Search Console > Add property > Domain
+  `tests-wise.com` > verify with the DNS TXT record it shows (Squarespace DNS) > Sitemaps >
+  submit `https://app.tests-wise.com/sitemap.xml`; Bing Webmaster Tools can import the
+  Search Console property. Indexing takes days; search `site:app.tests-wise.com` to check.
+- **Link previews**: paste the URL in https://www.opengraph.xyz or LinkedIn's Post
+  Inspector (https://www.linkedin.com/post-inspector/) once deployed; the image is
+  `frontend/public/og-image.png` (1200x630, regenerate with the scratch script if the
+  copy changes).
+
 ### 5. Smoke test
 
 ```bash
