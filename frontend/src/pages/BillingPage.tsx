@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { api, ApiError, type BillingInfo } from '../api'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { ErrorBox, Notice, formatDate } from '../components/ui'
 
 const PLAN_FEATURES: Record<string, string[]> = {
   free: ['Up to 8 pages per job', 'Excel report', 'English and Spanish scenarios'],
   starter: ['Up to 8 pages per job', 'Sites behind a login', 'English and Spanish scenarios'],
-  pro: ['Everything in Starter', '10 automated test runs per month', 'Priority support'],
+  pro: ['Everything in Starter', '10 automated test runs per month', '7-day free trial'],
 }
 
 export function BillingPage() {
@@ -16,6 +17,21 @@ export function BillingPage() {
   const [params, setParams] = useSearchParams()
   const wanted = params.get('plan')
   const redirected = useRef(false)
+  const [confirmCancel, setConfirmCancel] = useState(false)
+  const [busy, setBusy] = useState<'cancel' | 'resume' | null>(null)
+
+  async function change(action: 'cancel' | 'resume') {
+    setError(null)
+    setBusy(action)
+    try {
+      setInfo(action === 'cancel' ? await api.cancelPlan() : await api.resumePlan())
+      setConfirmCancel(false)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not change the subscription.')
+    } finally {
+      setBusy(null)
+    }
+  }
 
   useEffect(() => {
     api
@@ -35,7 +51,7 @@ export function BillingPage() {
     }
   }, [info, wanted])
 
-  if (error) return <ErrorBox message={error} />
+  if (error && !info) return <ErrorBox message={error} />
   if (!info) return <p className="muted">Loading…</p>
   const wantedPlan = wanted ? info.plans.find((p) => p.code === wanted) : undefined
 
@@ -84,12 +100,35 @@ export function BillingPage() {
               )}
             </div>
           </div>
-          {info.customer_portal_url && (
-            <a href={info.customer_portal_url} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
-              Manage subscription
-            </a>
-          )}
+          <div className="row">
+            {info.can_resume && (
+              <button type="button" className="btn-primary btn-sm" onClick={() => change('resume')} disabled={busy !== null}>
+                {busy === 'resume' ? 'Resuming…' : 'Keep my plan'}
+              </button>
+            )}
+            {info.customer_portal_url && (
+              <a href={info.customer_portal_url} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
+                Invoices and card
+              </a>
+            )}
+            {info.can_cancel && (
+              <button type="button" className="btn-danger btn-sm" onClick={() => setConfirmCancel(true)} disabled={busy !== null}>
+                Cancel plan
+              </button>
+            )}
+          </div>
         </div>
+        <ErrorBox message={info ? error : null} />
+        {info.status === 'cancelled' && info.current_period_end && (
+          <p className="help" style={{ marginTop: 'var(--space-8)' }}>
+            Cancelled: you keep {info.plan.name} until {formatDate(info.current_period_end)} and will not be charged again.
+          </p>
+        )}
+        {info.status === 'on_trial' && info.current_period_end && (
+          <p className="help" style={{ marginTop: 'var(--space-8)' }}>
+            Free trial: the first charge happens on {formatDate(info.current_period_end)} unless you cancel before.
+          </p>
+        )}
         <p className="muted" style={{ margin: 'var(--space-12) 0 var(--space-8)' }}>
           <b style={{ color: 'var(--ink)' }}>
             {info.used_this_month} of {info.plan.jobs_per_month}
@@ -134,15 +173,15 @@ export function BillingPage() {
                 </button>
               ) : checkout ? (
                 <a href={checkout} className={plan.code === 'starter' ? 'btn-primary' : 'btn-outline'} style={{ marginTop: 'auto' }}>
-                  {plan.price_usd > info.plan.price_usd ? 'Upgrade' : 'Switch'}
+                  {plan.trial_days > 0 && !info.status ? `Try free for ${plan.trial_days} days` : plan.price_usd > info.plan.price_usd ? 'Upgrade' : 'Switch'}
                 </a>
               ) : plan.price_usd > 0 && !billingConfigured ? (
                 <p className="help" style={{ marginTop: 'auto' }}>
                   Payments are not enabled on this server yet.
                 </p>
-              ) : info.customer_portal_url ? (
+              ) : info.can_cancel ? (
                 <p className="help" style={{ marginTop: 'auto' }}>
-                  Change or cancel from “Manage subscription”.
+                  Use “Cancel plan” above to return to Free at the end of the period.
                 </p>
               ) : null}
             </div>
@@ -151,7 +190,20 @@ export function BillingPage() {
       </div>
       <p className="help" style={{ marginTop: 'var(--space-24)' }}>
         Payments are processed by Lemon Squeezy, which handles taxes and invoices. Your card details never reach our servers. Prices in USD.
+        Refunds within 14 days of a charge: write to <a href="mailto:hola@tests-wise.com">hola@tests-wise.com</a>.
       </p>
+      <ConfirmDialog
+        open={confirmCancel}
+        title="Cancel your plan?"
+        confirmLabel="Cancel plan"
+        busy={busy === 'cancel'}
+        onConfirm={() => change('cancel')}
+        onCancel={() => setConfirmCancel(false)}
+      >
+        You keep <b>{info.plan.name}</b>
+        {info.current_period_end ? ` until ${formatDate(info.current_period_end)}` : ' until the end of the paid period'} and will not be charged again. You can undo this
+        from the same page while the period lasts.
+      </ConfirmDialog>
     </div>
   )
 }

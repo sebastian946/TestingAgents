@@ -50,6 +50,7 @@ class PlanRead(BaseModel):
     jobs_per_month: int
     price_usd: int
     test_runs_per_month: int = 0
+    trial_days: int = 0
 
 
 class BillingInfo(BaseModel):
@@ -63,6 +64,8 @@ class BillingInfo(BaseModel):
     status: str | None = Field(None, description="The provider's subscription status, if any")
     current_period_end: datetime | None = None
     customer_portal_url: str | None = Field(None, description="Where the user manages or cancels the subscription")
+    can_cancel: bool = Field(False, description="POST /billing/cancel is available (active subscription, API key set)")
+    can_resume: bool = Field(False, description="POST /billing/resume is available (cancelled, period not over)")
     plans: list[PlanRead]
     checkout_urls: dict[str, str] = Field(description="Hosted checkout per plan code, when billing is configured")
 

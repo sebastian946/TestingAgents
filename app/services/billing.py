@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import quote
 
+import requests
 from sqlalchemy.orm import Session
 
 from config.plans import FREE, PLANS, Plan
@@ -36,8 +37,16 @@ class WebhookError(Exception):
     pass
 
 
+class BillingError(Exception):
+    """A subscription action we cannot perform: no subscription, no API key, provider error."""
+
+
 def configured() -> bool:
     return bool(settings.lemonsqueezy_webhook_secret)
+
+
+def api_configured() -> bool:
+    return bool(settings.lemonsqueezy_api_key)
 
 
 def _now() -> datetime:
@@ -79,6 +88,8 @@ class Usage:
     customer_portal_url: str | None
 
     runs_this_month: int = 0
+    can_cancel: bool = False
+    can_resume: bool = False
 
     @property
     def remaining(self) -> int:
@@ -103,6 +114,11 @@ def usage_for(db: Session, user: User) -> Usage:
         status=subscription.status if subscription else None,
         current_period_end=_aware(subscription.current_period_end) if subscription else None,
         customer_portal_url=subscription.customer_portal_url if subscription else None,
+        can_cancel=bool(subscription and subscription.status in ENTITLED_STATUSES and api_configured()),
+        can_resume=bool(
+            subscription and subscription.status == "cancelled" and api_configured()
+            and _aware(subscription.current_period_end) is not None and _aware(subscription.current_period_end) > now
+        ),
     )
 
 
@@ -171,3 +187,66 @@ def apply_webhook(db: Session, payload: dict) -> str:
         current_period_end=period_end,
     )
     return f"{event}: user {user_id} -> {plan} ({status})"
+
+
+# ------------------------------------------------- cancel / resume through the API
+
+API_BASE = "https://api.lemonsqueezy.com/v1"
+API_TIMEOUT = 15
+
+
+def _api(method: str, path: str, json: dict | None = None) -> dict:
+    if not api_configured():
+        raise BillingError("Subscription changes are not enabled on this server.")
+    headers = {
+        "Authorization": f"Bearer {settings.lemonsqueezy_api_key}",
+        "Accept": "application/vnd.api+json",
+        "Content-Type": "application/vnd.api+json",
+    }
+    try:
+        response = requests.request(method, f"{API_BASE}{path}", headers=headers, json=json, timeout=API_TIMEOUT)
+    except requests.RequestException as exc:
+        raise BillingError(f"The payment provider did not answer ({exc.__class__.__name__}).")
+    if response.status_code >= 400:
+        raise BillingError(f"The payment provider refused the change (HTTP {response.status_code}).")
+    try:
+        return response.json()
+    except ValueError:
+        raise BillingError("The payment provider answered something that is not JSON.")
+
+
+def _store_from_api(db: Session, subscription: Subscription, body: dict) -> Subscription:
+    """Apply the subscription object the API returned (same shape as the webhook's data).
+    The webhook for the same change arrives a moment later and is idempotent."""
+    attributes = (body.get("data") or {}).get("attributes") or {}
+    status = str(attributes.get("status") or subscription.status)
+    period_end = _parse_time(attributes.get("ends_at")) or _parse_time(attributes.get("renews_at"))
+    return db_crud.upsert_subscription(
+        db,
+        user_id=subscription.user_id,
+        status=status,
+        current_period_end=period_end or subscription.current_period_end,
+        customer_portal_url=(attributes.get("urls") or {}).get("customer_portal") or subscription.customer_portal_url,
+    )
+
+
+def cancel_subscription(db: Session, user: User) -> Subscription:
+    """Cancel at the end of the paid period (the provider's DELETE does exactly that)."""
+    subscription = db_crud.get_subscription(db, user.id)
+    if subscription is None or subscription.status not in ENTITLED_STATUSES:
+        raise BillingError("There is no active subscription to cancel.")
+    body = _api("DELETE", f"/subscriptions/{subscription.provider_subscription_id}")
+    return _store_from_api(db, subscription, body)
+
+
+def resume_subscription(db: Session, user: User) -> Subscription:
+    """Undo a cancellation before the period ends."""
+    subscription = db_crud.get_subscription(db, user.id)
+    if subscription is None or subscription.status != "cancelled":
+        raise BillingError("There is no cancelled subscription to resume.")
+    body = _api(
+        "PATCH",
+        f"/subscriptions/{subscription.provider_subscription_id}",
+        json={"data": {"type": "subscriptions", "id": subscription.provider_subscription_id, "attributes": {"cancelled": False}}},
+    )
+    return _store_from_api(db, subscription, body)

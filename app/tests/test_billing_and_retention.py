@@ -39,6 +39,7 @@ def client(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(settings, "lemonsqueezy_variant_starter", "111")
     monkeypatch.setattr(settings, "lemonsqueezy_variant_pro", "222")
     monkeypatch.setattr(settings, "lemonsqueezy_checkout_pro_url", "https://shop.lemonsqueezy.com/buy/pro")
+    monkeypatch.setattr(settings, "lemonsqueezy_api_key", "lsq-test-key")
 
     def override_db():
         with factory() as db:
@@ -66,6 +67,30 @@ def webhook(client, event, user_id, variant="222", status="active", sub_id="sub-
     signature = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
     return client.post("/billing/webhook/lemonsqueezy", content=raw,
                        headers={"X-Signature": signature, "Content-Type": "application/json"})
+
+
+class FakeProviderApi:
+    """Stands in for `requests.request`: records calls and answers like Lemon Squeezy."""
+
+    def __init__(self, status_code=200, status="cancelled", ends_at="2026-11-19T00:00:00.000000Z"):
+        self.calls = []
+        self.status_code = status_code
+        self.status = status
+        self.ends_at = ends_at
+
+    def request(self, method, url, headers=None, json=None, timeout=None):
+        self.calls.append((method, url, headers, json))
+        api = self
+
+        class Response:
+            status_code = api.status_code
+
+            def json(self):
+                return {"data": {"type": "subscriptions", "id": url.rsplit("/", 1)[-1], "attributes": {
+                    "status": api.status, "ends_at": api.ends_at, "renews_at": None,
+                    "urls": {"customer_portal": "https://portal.example/sub-1"}}}}
+
+        return Response()
 
 
 # ----------------------------------------------------------------- allowances
@@ -130,6 +155,43 @@ def test_cancelled_keeps_the_plan_until_the_period_ends_then_falls_back(client):
     webhook(client, "subscription_expired", client.user_id, status="expired", ends_at=past)
     info = client.get("/billing/me").json()
     assert info["plan"]["code"] == "free" and info["status"] == "expired"
+
+
+def test_cancel_and_resume_from_our_ui(client, monkeypatch):
+    webhook(client, "subscription_created", client.user_id, variant="222")
+    info = client.get("/billing/me").json()
+    assert info["can_cancel"] is True and info["can_resume"] is False
+
+    fake = FakeProviderApi(status="cancelled", ends_at=(datetime.now(timezone.utc) + timedelta(days=10)).isoformat())
+    monkeypatch.setattr(billing.requests, "request", fake.request)
+    response = client.post("/billing/cancel")
+    assert response.status_code == 200, response.text
+    method, url, headers, body = fake.calls[-1]
+    assert method == "DELETE" and url.endswith("/subscriptions/sub-1") and headers["Authorization"] == "Bearer lsq-test-key"
+    info = response.json()
+    assert info["status"] == "cancelled" and info["plan"]["code"] == "pro"  # paid until the period ends
+    assert info["can_cancel"] is False and info["can_resume"] is True
+    assert client.post("/billing/cancel").status_code == 409  # nothing active any more
+
+    fake.status = "active"
+    response = client.post("/billing/resume")
+    assert response.status_code == 200
+    method, url, _, body = fake.calls[-1]
+    assert method == "PATCH" and body["data"]["attributes"] == {"cancelled": False}
+    assert response.json()["status"] == "active" and response.json()["can_cancel"] is True
+
+
+def test_cancel_without_subscription_or_api_key_or_on_provider_error(client, monkeypatch):
+    assert client.post("/billing/cancel").status_code == 409
+    webhook(client, "subscription_created", client.user_id, variant="222")
+    monkeypatch.setattr(settings, "lemonsqueezy_api_key", None)
+    assert client.get("/billing/me").json()["can_cancel"] is False
+    assert client.post("/billing/cancel").status_code == 409
+    monkeypatch.setattr(settings, "lemonsqueezy_api_key", "lsq-test-key")
+    monkeypatch.setattr(billing.requests, "request", FakeProviderApi(status_code=500).request)
+    response = client.post("/billing/cancel")
+    assert response.status_code == 409 and "HTTP 500" in response.json()["detail"]
+    assert client.get("/billing/me").json()["status"] == "active"  # nothing changed locally
 
 
 def test_bad_signature_unknown_user_and_unknown_variant(client):

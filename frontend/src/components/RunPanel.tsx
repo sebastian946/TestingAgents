@@ -109,8 +109,8 @@ export function RunPanel({ job, scenarios, billing }: { job: Job; scenarios: Sce
       {showForm && (
         <form onSubmit={start} className="card stack" style={{ marginBottom: 'var(--space-16)' }}>
           <Notice variant="warning">
-            The agent <b>acts on the site</b>: it fills forms, clicks buttons and submits. Only run it against a <b>test environment</b>. It never
-            pays, deletes or cancels, even if a scenario says so.
+            The agent <b>acts on the site</b>: it fills forms, clicks buttons, submits and, for shop scenarios, goes through the checkout with
+            fake card data. Only run it against a <b>test environment</b>. It never deletes, cancels or transfers anything, even if a scenario says so.
           </Notice>
           <label className="check" style={{ alignItems: 'flex-start' }}>
             <input type="checkbox" required checked={testEnv} onChange={(e) => setTestEnv(e.target.checked)} style={{ marginTop: 2 }} />

@@ -23,7 +23,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from agents import explorer, graph
-from agents.explorer import CrawledPage, LoginResult, _looks_unsafe, crawl
+from agents.executor import BrowserTools, RefusedAction
+from agents.explorer import CrawledPage, LoginResult, PlaywrightFetcher, _looks_unsafe, crawl, same_site
 from config.variables import settings
 from db import db_crud
 from db.conn import Base, get_db
@@ -115,6 +116,8 @@ def test_login_is_refused_without_a_key_without_consent_or_on_another_host(clien
     assert r.status_code == 400 and "authorized" in r.json()["detail"]
     r = client.post("/jobs", json={"url": URL, "login": {**LOGIN, "login_url": "https://other.example/login"}})
     assert r.status_code == 400 and "same site" in r.json()["detail"]
+    r = client.post("/jobs", json={"url": URL, "login": {**LOGIN, "login_url": "https://auth.shop.example/login"}})
+    assert r.status_code == 202 and r.json()["login_url"] == "https://auth.shop.example/login"  # sibling subdomain (WTA-35)
     r = client.post("/jobs", json={"url": URL, "login": {**LOGIN, "login_url": None}})
     assert r.status_code == 202 and r.json()["login_url"] == URL  # defaults to the job URL
     assert client.post("/jobs", json={"url": URL}).status_code == 202  # no login still fine without consent
@@ -193,7 +196,8 @@ def test_finishing_a_job_and_the_startup_sweep_clear_credentials(client, with_ke
     ("https://s.example/logout", True),
     ("https://s.example/log-out", True),
     ("https://s.example/sign_out", True),
-    ("https://s.example/checkout/step-1", True),
+    ("https://s.example/checkout/step-1", False),  # viewing the checkout is a GET (WTA-35)
+    ("https://s.example/cart", False),
     ("https://s.example/orders/42/cancel", True),
     ("https://s.example/products", False),
     ("https://s.example/account/settings", False),
@@ -204,13 +208,27 @@ def test_looks_unsafe(url, unsafe):
     assert _looks_unsafe(url) is unsafe
 
 
+@pytest.mark.parametrize("a, b, same", [
+    ("https://app.example.com/x", "https://auth.example.com/login", True),
+    ("https://www.example.com/", "https://example.com/login", True),
+    ("https://example.com/", "https://example.org/login", False),
+    ("http://127.0.0.1:8000/", "http://127.0.0.1:8000/login", True),
+    ("http://127.0.0.1:8000/", "http://127.0.0.2:8000/login", False),
+])
+def test_same_site(a, b, same):
+    assert same_site(a, b) is same
+
+
 # ----------------------------------------------------------------- the real login, in Chromium
 
 SESSION = "sess-ok"
 
 PUBLIC = {
-    "/": "<title>Home</title><a href='/login'>Login</a><a href='/account'>Account</a><a href='/about'>About</a>",
+    "/": "<title>Home</title><a href='/about'>About</a><a href='/account'>Account</a><a href='/login'>Log in</a>",
     "/about": "<title>About</title>",
+    "/login2": """<title>Sign in</title>
+        <form action="/login2" method="post"><label>Email <input name="email" type="email"></label>
+        <button type="submit">Next</button></form>""",
     "/login": """<title>Login</title>
         <form action="/session" method="post">
           <label>Email <input name="email" type="email"></label>
@@ -262,6 +280,12 @@ class SiteHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         form = self.rfile.read(length).decode()
+        if self.path == "/login2":  # two-step login: the password screen carries the email along
+            email = form.split("email=", 1)[-1].split("&")[0]
+            self._send(200, f"""<title>Password</title><form action="/session" method="post">
+                <input type="hidden" name="email" value="{email.replace('%40', '@')}">
+                <label>Password <input name="password" type="password"></label><button type="submit">Sign in</button></form>""")
+            return
         if self.path == "/session" and "email=qa%40example.com" in form and "password=hunter22" in form:
             self._send(302, "", {"Location": "/account", "Set-Cookie": f"session={SESSION}; Path=/"})
         else:
@@ -307,3 +331,49 @@ def test_a_login_page_without_a_form_is_reported(site):
     crawl(site, max_pages=3, timeout=10, use_browser=True,
           login=LoginSpec(f"{site}/about", "qa@example.com", "hunter22"), on_login=outcomes.append)
     assert not outcomes[0].ok and "No password field" in outcomes[0].message
+
+
+def test_the_home_page_as_login_url_follows_the_login_link(site):
+    """WTA-35: the customer gives the site URL; the explorer finds "Log in" by itself."""
+    outcomes = []
+    pages = crawl(site, max_pages=10, timeout=10, use_browser=True,
+                  login=LoginSpec(f"{site}/", "qa@example.com", "hunter22"), on_login=outcomes.append)
+    assert outcomes[0].ok, outcomes[0].message
+    assert "/account" in {p.url.removeprefix(site) for p in pages}
+
+
+def test_a_private_page_that_redirects_to_the_login_works_as_login_url(site):
+    """WTA-35: /account bounces anonymous visitors to /login; the form found there is used."""
+    outcomes = []
+    pages = crawl(f"{site}/account", max_pages=5, timeout=10, use_browser=True,
+                  login=LoginSpec(f"{site}/account", "qa@example.com", "hunter22"), on_login=outcomes.append)
+    assert outcomes[0].ok, outcomes[0].message
+    assert pages[0].url == f"{site}/account" and pages[0].title == "My account"
+
+
+def test_a_two_step_login_enters_the_identifier_first(site):
+    outcomes = []
+    pages = crawl(site, max_pages=10, timeout=10, use_browser=True,
+                  login=LoginSpec(f"{site}/login2", "qa@example.com", "hunter22"), on_login=outcomes.append)
+    assert outcomes[0].ok, outcomes[0].message
+    assert "/orders" in {p.url.removeprefix(site) for p in pages}
+
+
+def test_the_executor_login_tool_and_logged_out_scenarios(site):
+    """WTA-35: the `login` tool signs in without the model seeing credentials; `start_logged_out`
+    drops the session so a login-page scenario sees the form."""
+    spec = LoginSpec(f"{site}/login", "qa@example.com", "hunter22")
+    with PlaywrightFetcher() as browser:
+        page = browser.new_page()
+        tools = BrowserTools(page, "127.0.0.1", login=spec, fetcher=browser)
+        tools.navigate(f"{site}/account")
+        assert page.url.endswith("/login")  # anonymous: bounced
+        message = tools.login()
+        assert "Logged in as qa@example.com" in message and "hunter22" not in message
+        tools.navigate(f"{site}/account")
+        assert "My account" in tools.read_page()  # signed in now
+        tools.start_logged_out()
+        tools.navigate(f"{site}/account")
+        assert page.url.endswith("/login")
+        with pytest.raises(RefusedAction, match="No test account"):
+            BrowserTools(page, "127.0.0.1").login()

@@ -16,6 +16,7 @@ from db.models_db.models_db import Job, JobStatus, RunStatus, User
 from db.redis.redis_conn import enqueue_test_run
 from models.models import RunCreate, RunRead
 from routes.routes import owned_job
+from agents.explorer import same_site
 from security import credentials
 from security.auth import get_current_user, require_verified_email
 from security.ssrf import UnsafeURLError, validate_public_url
@@ -73,7 +74,7 @@ def start_run(payload: RunCreate, job: Job = Depends(owned_job), user: User = De
             login_url = validate_public_url(payload.login.login_url or job.url)
         except UnsafeURLError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Login URL: {exc}")
-        if urlsplit(login_url).hostname != urlsplit(job.url).hostname:
+        if not same_site(login_url, job.url):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="The login page must be on the same site as the job.")
         encrypted = credentials.encrypt(credentials.LoginSpec(login_url, payload.login.username, payload.login.password))
