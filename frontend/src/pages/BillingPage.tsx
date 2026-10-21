@@ -80,7 +80,8 @@ export function BillingPage() {
       {wantedPlan && wantedPlan.code !== info.plan.code && !info.checkout_urls[wantedPlan.code] && (
         <div style={{ marginBottom: 'var(--space-16)' }}>
           <Notice variant="warning">
-            Payments are not enabled on this server yet, so the {wantedPlan.name} plan cannot be purchased right now.{' '}
+            Paid plans open in a few days: you are on Free meanwhile, with everything except the higher allowance. Write to{' '}
+            <a href="mailto:hola@tests-wise.com">hola@tests-wise.com</a> and we will tell you the moment {wantedPlan.name} is available.{' '}
             <button type="button" className="link" onClick={() => setParams({})}>
               Dismiss
             </button>
@@ -177,7 +178,7 @@ export function BillingPage() {
                 </a>
               ) : plan.price_usd > 0 && !billingConfigured ? (
                 <p className="help" style={{ marginTop: 'auto' }}>
-                  Payments are not enabled on this server yet.
+                  Opens in a few days. <a href="mailto:hola@tests-wise.com?subject=Early%20access">Ask for early access</a>.
                 </p>
               ) : info.can_cancel ? (
                 <p className="help" style={{ marginTop: 'auto' }}>
