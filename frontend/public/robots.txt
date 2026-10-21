@@ -1,0 +1,16 @@
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /new
+Disallow: /job/
+Disallow: /billing
+Disallow: /account
+Disallow: /verify
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /auth/
+Disallow: /jobs
+Disallow: /docs
+Disallow: /openapi.json
+
+Sitemap: https://app.tests-wise.com/sitemap.xml
