@@ -56,9 +56,28 @@ BLOCKED_RESOURCE_TYPES = {"image", "media", "font"}  # not needed to read the DO
 # anonymous visitor and real for a logged-in one on a badly built site.
 UNSAFE_LINK_WORDS = frozenset({
     "logout", "signout", "delete", "remove", "destroy", "cancel", "unsubscribe", "deactivate",
-    "checkout", "pay", "payment", "purchase", "buy", "order", "confirm", "submit", "approve", "reject",
-    "transfer", "withdraw", "send", "archive", "reset", "revoke", "disable",
+    "confirm", "submit", "approve", "reject", "transfer", "withdraw", "send", "archive", "reset",
+    "revoke", "disable",
 })
+# Viewing a cart or a checkout page is a GET like any other, so those links ARE followed
+# (WTA-35): the Designer needs to see them to write purchase scenarios. Buying is a POST the
+# crawler never makes; whether the Executor may complete it is its own guardrail.
+
+# Link texts / hrefs that lead to the login page, when the customer gave us the home page
+LOGIN_LINK_WORDS = ("log in", "login", "sign in", "signin", "iniciar sesión", "iniciar sesion", "acceder",
+                    "entrar", "ingresar", "my account", "mi cuenta", "account")
+LOGIN_LINK_JS = """(words) => {
+  const norm = (s) => (s || '').trim().toLowerCase().replace(/\\s+/g, ' ');
+  for (const a of document.querySelectorAll('a[href], button')) {
+    const t = norm(a.innerText || a.getAttribute('aria-label'));
+    const h = norm(a.getAttribute('href'));
+    if (!t && !h) continue;
+    if (words.some(w => t === w || t.startsWith(w + ' ') || t.endsWith(' ' + w) ||
+                        (h && h.replace(/[^a-z]/g, '').includes(w.replace(/[^a-z]/g, '')) && w.length > 4)))
+      return a.href || t;
+  }
+  return null;
+}"""
 
 
 @dataclass
@@ -126,6 +145,19 @@ def _site_key(url: str) -> str:
     """Host used to decide 'same domain'; www.example.com and example.com are one site."""
     host = urlsplit(url).hostname or ""
     return host[4:] if host.startswith("www.") else host
+
+
+def same_site(a: str, b: str) -> bool:
+    """True when two URLs belong to the same registrable domain (app.example.com and
+    auth.example.com), which is where a login page may legitimately live. Two-label
+    approximation: fine for .com/.co, over-generous for example.co.uk (accepted)."""
+    def key(url: str) -> str:
+        host = (urlsplit(url).hostname or "").lower()
+        if host.replace(".", "").isdigit() or host == "localhost":
+            return host
+        parts = host.split(".")
+        return ".".join(parts[-2:]) if len(parts) >= 2 else host
+    return key(a) == key(b)
 
 
 def _clean_title(raw: str | None) -> str | None:
@@ -265,11 +297,58 @@ class PlaywrightFetcher:
         finally:
             page.close()
 
+    def clear_session(self) -> None:
+        """Forget the cookies (log out everywhere) without closing the browser (WTA-35)."""
+        assert self._context is not None, "use PlaywrightFetcher inside a `with` block"
+        self._context.clear_cookies()
+
+    def _settle(self, page, timeout_ms: int = 3000) -> None:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        try:
+            page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        except PlaywrightTimeoutError:
+            pass
+
+    def _find_login_form(self, page, spec: LoginSpec, timeout: int):
+        """Locate the visible password field, trying in order (WTA-35):
+        1. the page as given (a login page, or a private page that redirected to it);
+        2. the site's own login link, when the customer gave us the home page;
+        3. a two-step form (identifier first, password on the next screen).
+        Returns (password_locator, two_step) or (None, False)."""
+        password = page.locator("input[type=password]:visible").first
+        if password.count() > 0:
+            return password, False
+
+        target = page.evaluate(LOGIN_LINK_JS, list(LOGIN_LINK_WORDS))
+        if target:
+            if target.startswith("http"):
+                if same_site(target, spec.login_url):
+                    page.goto(target, timeout=timeout * 1000, wait_until="domcontentloaded")
+            else:  # a button that opens the form in place
+                page.get_by_text(target, exact=False).first.click(timeout=5000)
+            self._settle(page)
+            password = page.locator("input[type=password]:visible").first
+            if password.count() > 0:
+                return password, False
+
+        identifier = page.locator("input:visible").filter(
+            has_not=page.locator("[type=hidden], [type=checkbox], [type=radio], [type=submit], [type=button], [type=search]")
+        ).first
+        if identifier.count() > 0 and (identifier.get_attribute("type") or "text") in ("text", "email", "tel"):
+            identifier.fill(spec.username)
+            identifier.press("Enter")
+            self._settle(page, timeout * 1000)
+            password = page.locator("input[type=password]:visible").first
+            if password.count() > 0:
+                return password, True
+        return None, False
+
     def login(self, spec: LoginSpec, timeout: int) -> LoginResult:
         """Sign in once; the session cookies then apply to every page of the crawl.
 
         Deterministic, no LLM (ADR-01): the login form is the one with a visible password
-        field; the username field is the visible text/email input before it; submit is the
+        field (found directly, behind the site's login link, or after a first identifier
+        step); the username field is the visible text/email input before it; submit is the
         form's submit button, or Enter. Success = no password field is visible afterwards.
         Any failure is reported, never raised:
         the crawl then continues as an anonymous visitor and the job says so.
@@ -281,19 +360,17 @@ class PlaywrightFetcher:
         page = self._context.new_page()
         try:
             page.goto(spec.login_url, timeout=timeout * 1000, wait_until="domcontentloaded")
-            try:
-                page.wait_for_load_state("networkidle", timeout=3000)
-            except PlaywrightTimeoutError:
-                pass
-            password = page.locator("input[type=password]:visible").first
-            if password.count() == 0:
-                return LoginResult(False, f"No password field found on {spec.login_url}.")
+            self._settle(page)
+            password, two_step = self._find_login_form(page, spec, timeout)
+            if password is None:
+                return LoginResult(False, f"No password field found on {spec.login_url}, behind its login link, or after entering the username.")
             username = password.locator(
                 "xpath=preceding::input[not(@type) or @type='text' or @type='email' or @type='tel'][1]"
             )
-            if username.count() == 0:
-                return LoginResult(False, f"No username field found before the password field on {spec.login_url}.")
-            username.fill(spec.username)
+            if username.count() == 0 and not two_step:
+                return LoginResult(False, f"No username field found before the password field on {page.url}.")
+            if username.count() > 0:
+                username.fill(spec.username)
             password.fill(spec.password)
             submit = password.locator("xpath=ancestor::form[1]//*[(self::button or self::input) and @type='submit']").first
             if submit.count() == 0:

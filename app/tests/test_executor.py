@@ -119,6 +119,13 @@ def test_tools_refuse_other_hosts_and_destructive_actions(tools, site):
         tools.click("Delete account")
     with pytest.raises(RefusedAction, match="destructive or paid"):
         tools.click("Checkout")
+    # Declared test environment (WTA-35): buying is allowed, deleting still is not
+    lenient = BrowserTools(tools.page, "127.0.0.1", allow_purchases=True)
+    assert lenient.click("Checkout").startswith("Clicked") and tools.page.url.endswith("/checkout")
+    lenient.navigate(f"{site}/")
+    with pytest.raises(RefusedAction, match="destructive or paid"):
+        lenient.click("Delete account")
+    tools.navigate(f"{site}/")
     with pytest.raises(RefusedAction, match="Element not found"):
         tools.click("Nonexistent button")
     with pytest.raises(RefusedAction, match="unknown key"):
@@ -176,7 +183,7 @@ def test_loop_executes_tools_and_records_the_verdict(tools, site, monkeypatch, t
     assert len(calls) == 4 and all(c.model == "claude-sonnet-5-5" for c in calls)
     first = client.calls[0]
     assert first["model"] == "claude-sonnet-5-5" and first["output_config"] == {"effort": settings.executor_effort}
-    assert [t["name"] for t in first["tools"]] == ["navigate", "read_page", "click", "fill", "press", "finish"]
+    assert [t["name"] for t in first["tools"]] == ["navigate", "read_page", "click", "fill", "press", "login", "finish"]
     assert "SC-001" in first["messages"][0]["content"] and "<expected_result>" in first["messages"][0]["content"]
     # tool results went back as tool_result blocks for the right ids
     second = client.calls[1]["messages"]

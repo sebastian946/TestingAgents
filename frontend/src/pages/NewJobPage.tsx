@@ -107,14 +107,18 @@ export function NewJobPage() {
             <div className="stack" style={{ paddingTop: 'var(--space-2)' }}>
               <Notice variant="warning">
                 Use a <b>test account</b> on a <b>test environment</b>, never an admin or a real customer account: the explorer browses as this
-                user. Action links (log out, delete, checkout, pay) are not followed, but we cannot guarantee how every site behaves. The
+                user. Action links (log out, delete, cancel, transfer) are not followed, but we cannot guarantee how every site behaves. The
                 credentials are encrypted, used only for this job and deleted as soon as the exploration ends.
               </Notice>
               <div className="field">
                 <label htmlFor="login_url" className="label">
-                  Login page <span className="muted" style={{ fontWeight: 400 }}>(optional, defaults to the site URL)</span>
+                  Login page <span className="muted" style={{ fontWeight: 400 }}>(optional)</span>
                 </label>
                 <input id="login_url" type="url" placeholder="https://www.example.com/login" className="input" value={loginUrl} onChange={(e) => setLoginUrl(e.target.value)} />
+                <div className="help">
+                  Leave it empty and we look for the “Log in” link on the site URL. A private page that redirects to the login works too.
+                  Two-step logins (email first, then password) are supported; 2FA, captchas and social login are not.
+                </div>
               </div>
               <div className="field-grid">
                 <div className="field">

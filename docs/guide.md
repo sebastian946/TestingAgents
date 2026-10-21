@@ -406,8 +406,25 @@ with that account). The explorer opens the login page in Chromium, finds the vis
 password field, the text/email field before it and the form's submit, signs in, and crawls
 with that session. A visible password field after submitting means the login failed: the
 crawl continues anonymously and `job.error` says so. While logged in, links whose path
-contains an action word (`logout`, `delete`, `checkout`, `pay`, `cancel`, ...,
-`UNSAFE_LINK_WORDS` in `agents/explorer.py`) are not followed: the crawler acts as a real user.
+contains an action word (`logout`, `delete`, `cancel`, `transfer`, ..., `UNSAFE_LINK_WORDS`
+in `agents/explorer.py`) are not followed: the crawler acts as a real user. Cart and checkout
+pages ARE visited (a GET shows them, it does not buy), so the Designer can write purchase
+scenarios (WTA-35).
+
+Finding the form (WTA-35, `PlaywrightFetcher._find_login_form`): the login URL may be the
+login page, a private page that redirects to it (`/dashboard` -> `/login`), or the home
+page, in which case the explorer follows the site's own "Log in" link (`LOGIN_LINK_WORDS`,
+English and Spanish); a two-step form (identifier first, password on the next screen) is
+handled by entering the username and pressing Enter. The login page may live on a sibling
+subdomain (`auth.example.com` for `app.example.com`, `explorer.same_site`).
+
+In an automated run (WTA-33) the same login is applied once before the scenarios; the
+Executor also has a `login` tool that repeats it (session expired, or a valid-login
+scenario), without the model ever seeing the credentials, and scenarios whose page is the
+login page itself start logged out (`ScenarioToRun.logged_out`, cookies cleared, session
+restored before the next scenario). Purchases and checkouts are allowed in runs because
+the user declared a test environment (`BrowserTools(allow_purchases=True)`, fake card
+data in the prompt); deletions, cancellations and transfers never are.
 
 The credentials are encrypted with `CREDENTIALS_KEY` (`security/credentials.py`, Fernet)
 before the row is written, decrypted only inside the explorer node, and cleared from

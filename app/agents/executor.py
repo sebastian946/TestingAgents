@@ -8,8 +8,11 @@ contract an MCP server would offer, without a second process.
 
 Guardrails, because the agent acts as a real user on the customer's site:
 - the browser stays on the job's host (navigations elsewhere are refused);
-- clicks and fills on anything that looks like a destructive or paid action (pay, delete,
-  purchase, unsubscribe... `UNSAFE_LINK_WORDS`) are refused, whatever the scenario says;
+- clicks and fills on anything destructive (delete, cancel, unsubscribe, transfer...
+  `DESTRUCTIVE_WORDS`) are refused, whatever the scenario says; purchases and checkouts
+  (`COMMERCE_WORDS`) only when the run was declared on a test environment (WTA-35);
+- a `login` tool signs in with the run's test account without ever showing the model the
+  credentials; scenarios on the login page itself start logged out (WTA-35);
 - a step cap per scenario (`EXECUTOR_MAX_STEPS`) and a time cap; past either, `blocked`;
 - the page is read as text and an inventory, never as a screenshot sent to the model
   (cheaper, and no customer pixels leave the server); a screenshot is saved locally as
@@ -43,10 +46,16 @@ expected result and call `finish` exactly once with the outcome:
 - "blocked": you could not perform the steps (element not found, site error, refused action).
 
 Rules:
-- Never attempt payments, purchases, deletions, cancellations or anything irreversible, even
-  if a step says so: finish as "blocked" and explain. The tools refuse such actions too.
-- Stay on the site under test. Do not log in with any credentials other than the ones the
-  tools already applied.
+- Never delete, cancel, unsubscribe, transfer or do anything irreversible, even if a step says
+  so: finish as "blocked" and explain. The tools refuse such actions too.
+- Purchases and checkouts are allowed only because this is a declared test environment; for
+  payment details use obviously fake test data (card 4242 4242 4242 4242, any future date)
+  unless the steps give other values.
+- Session: when the run has a test account it is already signed in. If a page unexpectedly
+  shows a login form (session expired, or the scenario starts logged out), call `login`: it
+  signs in with that account, you never see its credentials. For a scenario that tests a
+  correct login, `login` IS the test; for wrong-credential scenarios fill the form yourself
+  with invented data. Stay on the site under test and never use other credentials.
 - Placeholders in <angle brackets> (e.g. <valid email>) mean you should invent realistic
   test data for them; never real personal data.
 - Be concise in the reason: one or two sentences a tester can verify.
@@ -64,6 +73,8 @@ TOOLS: list[dict[str, Any]] = [
                       "required": ["target", "text"]}},
     {"name": "press", "description": "Press a keyboard key on the focused element (e.g. Enter, Tab, Escape).",
      "input_schema": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"]}},
+    {"name": "login", "description": "Sign in with the test account provided for this run (its credentials are applied by the tool; you never see them). Use it for a valid-login scenario or when the site shows a login page unexpectedly.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "finish", "description": "Report the outcome of the scenario. Call it exactly once, at the end.",
      "input_schema": {"type": "object", "properties": {
          "outcome": {"type": "string", "enum": ["pass", "fail", "blocked"]},
@@ -92,18 +103,21 @@ INVENTORY_JS = """() => {
 
 # Actions the Executor never performs, however the scenario reads them. Narrower than the
 # crawler's UNSAFE_LINK_WORDS on purpose: submitting a contact form ("send", "submit",
-# "confirm") is exactly what a scenario tests; paying, buying or deleting never is
-FORBIDDEN_WORDS = frozenset({
-    "pay", "payment", "purchase", "buy", "checkout", "delete", "remove", "destroy", "cancel", "unsubscribe",
-    "deactivate", "transfer", "withdraw", "revoke", "disable", "erase", "wipe",
+# "confirm") is exactly what a scenario tests; deleting never is
+DESTRUCTIVE_WORDS = frozenset({
+    "delete", "remove", "destroy", "cancel", "unsubscribe", "deactivate", "transfer", "withdraw", "revoke",
+    "disable", "erase", "wipe",
 })
+# Buying is what a shop's scenarios test; allowed only on a declared test environment (WTA-35)
+COMMERCE_WORDS = frozenset({"pay", "payment", "purchase", "buy", "checkout", "order"})
+FORBIDDEN_WORDS = DESTRUCTIVE_WORDS | COMMERCE_WORDS  # the default: nothing declared
 
 
-def _forbidden(text: str) -> bool:
+def _forbidden(text: str, allow_purchases: bool = False) -> bool:
     """True when any word of a URL path, a label or a link text is a forbidden action."""
     words = re.split(r"[^a-z]+", text.lower())
     joined = {w for w in words if w} | {a + b for a, b in zip(words, words[1:])}
-    return bool(joined & FORBIDDEN_WORDS)
+    return bool(joined & (DESTRUCTIVE_WORDS if allow_purchases else FORBIDDEN_WORDS))
 
 
 class RefusedAction(Exception):
@@ -135,6 +149,7 @@ class ScenarioToRun:
     expected_result: str
     page_url: str
     page_id: int | None = None
+    logged_out: bool = False  # WTA-35: a scenario on the login page itself starts without the session
 
 
 # ----------------------------------------------------------------- browser tools
@@ -142,10 +157,27 @@ class ScenarioToRun:
 class BrowserTools:
     """The tools, bound to one Playwright page and one host."""
 
-    def __init__(self, page, host: str, timeout_ms: int = 10_000):
+    def __init__(self, page, host: str, timeout_ms: int = 10_000, login=None, fetcher=None, allow_purchases: bool = False):
         self.page = page
         self.host = host
         self.timeout_ms = timeout_ms
+        self._login = login  # LoginSpec of the run's test account, or None; never shown to the model
+        self._fetcher = fetcher  # the PlaywrightFetcher that owns the context (performs the login)
+        self.allow_purchases = allow_purchases
+
+    def login(self) -> str:
+        """The `login` tool: the deterministic login of the explorer, in this context."""
+        if self._login is None or self._fetcher is None:
+            raise RefusedAction("No test account was provided for this run.")
+        outcome = self._fetcher.login(self._login, timeout=15)
+        if not outcome.ok:
+            return f"Login failed: {outcome.message}"
+        return f"{outcome.message} The session is now signed in: navigate to the page the scenario needs."
+
+    def start_logged_out(self) -> None:
+        """Drop the session before a scenario that tests the login page itself."""
+        if self._fetcher is not None:
+            self._fetcher.clear_session()
 
     def _same_site(self, url: str) -> bool:
         return (urlsplit(url).hostname or "").lower() == self.host.lower()
@@ -153,7 +185,7 @@ class BrowserTools:
     def navigate(self, url: str) -> str:
         if not self._same_site(url):
             raise RefusedAction(f"Refused: {url} is not on the site under test ({self.host}).")
-        if _forbidden(urlsplit(url).path):
+        if _forbidden(urlsplit(url).path, self.allow_purchases):
             raise RefusedAction("Refused: that URL looks like a destructive or paid action.")
         self.page.goto(url, timeout=self.timeout_ms, wait_until="domcontentloaded")
         self._settle()
@@ -194,7 +226,7 @@ class BrowserTools:
             text += " " + (element.get_attribute("href") or "")
         except Exception:
             pass
-        if _forbidden(text):
+        if _forbidden(text, self.allow_purchases):
             raise RefusedAction("Refused: that element looks like a destructive or paid action (pay, delete, cancel...).")
 
     def click(self, target: str) -> str:
@@ -339,6 +371,8 @@ def _run_tool(tools: BrowserTools, name: str, args: dict[str, Any]) -> str:
             return tools.fill(str(args.get("target", "")), str(args.get("text", "")))
         if name == "press":
             return tools.press(str(args.get("key", "")))
+        if name == "login":
+            return tools.login()
         return f"Unknown tool {name}"
     except RefusedAction as exc:
         return str(exc)

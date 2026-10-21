@@ -29,7 +29,9 @@ def run_tests(run_id: int) -> dict:
         selected = {p.id: p for p in db_crud.get_selected_pages(db, run.job_id)}
         scenarios = [s for s in db_crud.get_scenarios_by_job(db, run.job_id) if s.page_id in selected]
         todo = [ScenarioToRun(s.id, s.scenario_code, s.title, [str(x) for x in (s.steps or [])], s.expected_result,
-                              selected[s.page_id].url, s.page_id) for s in scenarios][: settings.executor_max_scenarios]
+                              selected[s.page_id].url, s.page_id,
+                              logged_out=bool(run.login_credentials) and selected[s.page_id].page_type == "login")
+                for s in scenarios][: settings.executor_max_scenarios]
         job_id, job_url = job.id, job.url
         blob = run.login_credentials
         db_crud.mark_run_running(db, run_id, total=len(todo))
@@ -48,8 +50,18 @@ def run_tests(run_id: int) -> dict:
                     error = f"{outcome.message} The scenarios were not run."
             if error is None:
                 page = browser.new_page()
-                tools = BrowserTools(page, host)
+                # The run only happens on a declared test environment, so purchases are allowed
+                tools = BrowserTools(page, host, login=login, fetcher=browser, allow_purchases=True)
+                signed_in = login is not None
                 for s in todo:
+                    # Login-page scenarios run logged out (otherwise the form is not even shown);
+                    # the session is restored before the next scenario that needs it (WTA-35)
+                    if s.logged_out and signed_in:
+                        tools.start_logged_out()
+                        signed_in = False
+                    elif not s.logged_out and login is not None and not signed_in:
+                        signed_in = browser.login(login, timeout=15).ok
+
                     def log_call(call: CallUsage, scenario_page=s.page_id):
                         with local_session() as db:
                             db_crud.create_llm_call(

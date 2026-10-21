@@ -53,6 +53,10 @@ the moment the crawl ends.**
 
 - Sites behind a login are covered, which is most SaaS products. Pages reached only through
   multi-step interactions are still out of scope.
+- WTA-35 addendum: the login URL no longer has to be the form itself (home page with a
+  "Log in" link, private page that redirects, two-step forms, sibling auth subdomain all
+  work), cart/checkout pages are crawled (view-only GETs), and the Executor gets a `login`
+  tool plus logged-out login-page scenarios. Still deterministic, still no LLM in the login.
 - No 2FA, captchas or social login: customers with those must provide a test account
   without them. Deliberate: solving them means fighting the site's own protections.
 - Rotating `CREDENTIALS_KEY` only affects jobs that are mid-crawl at that moment (they

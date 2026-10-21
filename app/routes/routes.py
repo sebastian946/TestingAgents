@@ -14,6 +14,7 @@ from db.conn import get_db
 from db.models_db.models_db import Job, JobStatus, User
 from db.redis.redis_conn import add_new_job_to_queue, enqueue_continuation
 from models.models import JobCreate, JobRead, JobUsage, PageRead, PageSelection, ScenarioRead
+from agents.explorer import same_site
 from security import credentials
 from services import billing, cleanup
 from security.auth import get_current_user, require_verified_email
@@ -66,7 +67,7 @@ def create_job(payload: JobCreate, user: User = Depends(require_verified_email),
             login_url = validate_public_url(payload.login.login_url or url)
         except UnsafeURLError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Login URL: {exc}")
-        if urlsplit(login_url).hostname != urlsplit(url).hostname:
+        if not same_site(login_url, url):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="The login page must be on the same site as the URL under test.")
         encrypted = credentials.encrypt(credentials.LoginSpec(login_url, payload.login.username, payload.login.password))
