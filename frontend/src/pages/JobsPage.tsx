@@ -64,7 +64,7 @@ export function JobsPage() {
             </svg>
           </div>
           <h2 className="card-title">No jobs yet</h2>
-          <p>Paste a URL and our agents will explore up to 8 pages and write the test scenarios for you — in English or Spanish.</p>
+          <p>Paste a URL and the AI agents will explore up to 8 pages and write the test scenarios automatically — in English or Spanish.</p>
           <Link to="/new" className="btn-primary">
             Create your first job
           </Link>

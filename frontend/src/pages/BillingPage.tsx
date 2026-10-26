@@ -190,7 +190,7 @@ export function BillingPage() {
         })}
       </div>
       <p className="help" style={{ marginTop: 'var(--space-24)' }}>
-        Payments are processed by Lemon Squeezy, which handles taxes and invoices. Your card details never reach our servers. Prices in USD.
+        Your plan is active the moment checkout completes. Payments are processed by Lemon Squeezy, which handles taxes and invoices. Your card details never reach our servers. Prices in USD.
         Refunds within 14 days of a charge: write to <a href="mailto:hola@tests-wise.com">hola@tests-wise.com</a>.
       </p>
       <ConfirmDialog
