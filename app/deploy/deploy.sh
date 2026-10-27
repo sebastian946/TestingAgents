@@ -41,8 +41,9 @@ main() {
   mkdir -p "$backups"
   local dump
   dump="$backups/predeploy-$(date -u +%F-%H%M)-${prev:0:7}.sql.gz"
-  set -a; . ./.env; set +a
-  if docker exec postgres_db pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$dump"; then
+  # The credentials come from the container's own environment: .env is not valid bash
+  # (EMAIL_FROM=Name <address> is fine for docker compose, a syntax error for `source`)
+  if docker exec postgres_db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$dump"; then
     log "database dumped to $dump ($(du -h "$dump" | cut -f1))"
   else
     log "database dump failed: refusing to deploy"; rm -f "$dump"; exit 4
@@ -70,7 +71,7 @@ main() {
   if bash app/deploy/smoke.sh; then
     log "rolled back to ${prev:0:7}; the failed commit is ${sha:0:7}"
   else
-    log "ROLLBACK ALSO UNHEALTHY. If a migration ran, restore: gunzip -c $dump | docker exec -i postgres_db psql -U \$DB_USER \$DB_NAME"
+    log "ROLLBACK ALSO UNHEALTHY. If a migration ran, restore: gunzip -c $dump | docker exec -i postgres_db sh -c 'psql -U \"\$POSTGRES_USER\" \"\$POSTGRES_DB\"'"
   fi
   exit 1
 }
