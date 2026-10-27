@@ -220,7 +220,17 @@ def _api(method: str, path: str, json: dict | None = None) -> dict:
     except requests.RequestException as exc:
         raise BillingError(f"The payment provider did not answer ({exc.__class__.__name__}).")
     if response.status_code >= 400:
-        raise BillingError(f"The payment provider refused the change (HTTP {response.status_code}).")
+        # JSON:API errors carry a human detail ("The related resource does not exist."); log
+        # it with the path so a wrong variant or store id is obvious from the API logs
+        detail = ""
+        try:
+            errors = response.json().get("errors") or []
+            detail = "; ".join(str(e.get("detail") or e.get("title") or "") for e in errors if isinstance(e, dict)).strip("; ")
+        except (ValueError, AttributeError):
+            pass
+        print(f"[billing] provider {method} {path} -> HTTP {response.status_code}: {detail or 'no detail'}", flush=True)
+        suffix = f": {detail[:200].rstrip('.')}" if detail else ""
+        raise BillingError(f"The payment provider refused the change (HTTP {response.status_code}){suffix}.")
     try:
         return response.json()
     except ValueError:

@@ -216,6 +216,16 @@ def test_checkout_is_created_per_user_through_the_api_or_falls_back_to_the_share
     monkeypatch.setattr(billing.requests, "request", FakeProviderApi(status_code=422).request)
     assert client.post("/billing/checkout", json={"plan": "pro"}).status_code == 503
 
+    class NotFound:  # the provider's JSON:API error body reaches the message
+        status_code = 404
+
+        def json(self):
+            return {"errors": [{"status": "404", "title": "Not Found", "detail": "The related resource does not exist."}]}
+
+    monkeypatch.setattr(billing.requests, "request", lambda *a, **k: NotFound())
+    r = client.post("/billing/checkout", json={"plan": "pro"})
+    assert r.status_code == 503 and r.json()["detail"].endswith("(HTTP 404): The related resource does not exist.")
+
 
 def test_cancel_without_subscription_or_api_key_or_on_provider_error(client, monkeypatch):
     assert client.post("/billing/cancel").status_code == 409
