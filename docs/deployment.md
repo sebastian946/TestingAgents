@@ -161,31 +161,76 @@ first with **Test mode** on (toggle in the left sidebar), then again in live mod
 
 ### 5. Smoke test
 
+`app/deploy/smoke.sh` checks a running deployment without changing anything: it waits for
+`GET /Health/ready` (database reachable and migrated to the latest revision, Redis, at least
+one worker on the queue), then the landing, the dashboard shell, the legal pages,
+`robots.txt`/`sitemap.xml`, that the API demands a login, that the billing webhook rejects a
+bad signature, the HSTS and CSP headers and how long the TLS certificate is still valid.
+
 ```bash
-curl -X POST https://api.example.com/auth/register -H "Content-Type: application/json" \
-  -d '{"email": "you@example.com", "password": "a-long-password"}'
-# -> {"access_token": "...", ...}
-TOKEN=...
-curl -X POST https://api.example.com/jobs -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"url": "https://www.saucedemo.com/", "language": "en"}'
+app/deploy/smoke.sh                              # on the server (https://$DOMAIN from .env)
+bash app/deploy/smoke.sh https://app.tests-wise.com   # from anywhere
 ```
 
-Then `GET /jobs/{id}` with the same header until `status` is `done`, and `GET /jobs/{id}/report`.
+It prints one `ok`/`FAIL` line per check and exits 1 on any failure. `/Health` stays the
+cheap liveness check Docker uses; `/Health/ready` answers 503 with the failing check
+(`database: down|behind`, `redis: down`, `worker: none|down`) and never an error message.
 
-### 6. Updating
+### 6. Updating: CI/CD (WTA-38)
+
+Every pull request runs `.github/workflows/ci-cd.yml`: backend unit tests, `alembic check`
+against a real PostgreSQL, the integration test, frontend lint and build, shellcheck, the
+compose files and `caddy validate`. A push to `main` (a merged PR) runs the same checks and
+then deploys:
+
+1. GitHub connects with a deploy key whose only allowed command is
+   `app/deploy/ssh-entry.sh` (`restrict` in `authorized_keys`: no shell, no forwarding). It
+   accepts `deploy <sha>` and `smoke`, nothing else.
+2. `deploy.sh` of that commit takes a lock, dumps the database to
+   `/var/backups/testing-agents/predeploy-*.sql.gz` (keeps 10), checks out the commit,
+   runs `docker compose ... up -d --build` and the smoke test.
+3. If the build or the smoke test fails, it checks out the previous commit, rebuilds and
+   smoke-tests again, and the workflow turns red. A migration is not undone: the dump of
+   step 2 is the way back (`gunzip -c <dump> | docker exec -i postgres_db psql -U $DB_USER $DB_NAME`).
+4. The workflow runs the smoke test once more from GitHub, through DNS and TLS.
+
+`.github/workflows/uptime.yml` runs the smoke test every 30 minutes; a red run means
+production needs attention, and GitHub emails it.
+
+One-time setup:
 
 ```bash
+# On the server, once, after merging the CI/CD pull request
 cd /opt/testing-agents && git pull
 docker compose --env-file .env -f app/docker-compose.yml -f app/docker-compose.prod.yml up -d --build
+ssh-keygen -t ed25519 -N "" -C github-deploy -f /root/.ssh/github_deploy
+echo "restrict,command=\"/bin/bash /opt/testing-agents/app/deploy/ssh-entry.sh\" $(cat /root/.ssh/github_deploy.pub)" >> /root/.ssh/authorized_keys
+cat /root/.ssh/github_deploy          # the private key: paste it into the DEPLOY_SSH_KEY secret
+ssh-keyscan -t ed25519 SERVER_IP 2>/dev/null   # the line it prints is DEPLOY_KNOWN_HOSTS
+rm /root/.ssh/github_deploy           # GitHub keeps the only copy of the private key
 ```
 
-This rebuilds and restarts the API and the worker. Restarting the worker matters: a running
-worker keeps the code it started with. A job that was running is marked `failed` by RQ;
-the client can submit it again.
+In GitHub (Settings > Environments > `production` > secrets, or with `gh`):
 
-Schema changes are applied by the api container itself: it runs `alembic upgrade head`
-before serving, so a release that adds a migration needs nothing manual. To see the state:
-`docker compose ... exec api alembic current`.
+| Name | Kind | Value |
+|---|---|---|
+| `DEPLOY_HOST` | environment secret | the server IP |
+| `DEPLOY_SSH_KEY` | environment secret | the private key printed above, whole, with its BEGIN/END lines |
+| `DEPLOY_KNOWN_HOSTS` | environment secret | the `ssh-keyscan` line above |
+| `APP_URL` | repository variable | `https://app.tests-wise.com` |
+
+Then Actions > CI/CD > Run workflow (branch `main`) deploys the current commit; from then on
+merging a pull request is the whole release. Optional: Settings > Branches > protect `main`
+and require the four CI checks, and add yourself as required reviewer of the `production`
+environment to approve each deploy by hand.
+
+By hand (same script, same rollback): `ssh root@SERVER` then
+`/opt/testing-agents/app/deploy/deploy.sh $(git -C /opt/testing-agents rev-parse origin/main)`
+after a `git fetch`.
+
+Restarting the worker matters: a running worker keeps the code it started with; `up -d
+--build` recreates it. A job that was running is marked `failed` by RQ and retried.
+Migrations run in the api container (`alembic upgrade head` before uvicorn).
 
 ### 7. Backups
 
@@ -205,7 +250,8 @@ Restore: `gunzip -c db-2026-10-16-0300.sql.gz | docker exec -i postgres_db psql 
 
 ### 8. Monitoring
 
-- Uptime: a free monitor (UptimeRobot, Better Stack) on `https://api.example.com/Health`.
+- Uptime: the `Uptime` workflow (smoke test every 30 minutes, see step 6). An external
+  monitor (UptimeRobot, Better Stack) on `https://DOMAIN/Health/ready` adds alerts by SMS.
 - Jobs and cost: LangSmith shows every job as a trace; `GET /jobs/{id}/usage` and the
   `llm_calls` table (ADR-06) answer cost questions with SQL.
 - Logs: `docker compose ... logs -f worker` (or `api`, `caddy`). Docker keeps them on disk;

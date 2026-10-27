@@ -1,0 +1,30 @@
+# Read-only smoke test of production every 30 minutes (WTA-38). A failure turns the run red
+# and GitHub emails whoever last edited this file's schedule; the job summary says which
+# check failed (readiness, landing, API, webhook, certificate...).
+name: Uptime
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: app/deploy
+      - name: Smoke test
+        shell: bash   # bash -eo pipefail: the tee below must not hide the script's exit code
+        env:
+          READY_TIMEOUT: "60"
+        run: bash app/deploy/smoke.sh "${{ vars.APP_URL }}" | tee smoke.txt
+      - name: Summary
+        if: always()
+        run: |
+          { echo '```'; cat smoke.txt 2>/dev/null || echo "no output"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

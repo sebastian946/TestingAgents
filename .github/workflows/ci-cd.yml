@@ -1,0 +1,124 @@
+# CI on every pull request; CI + deploy on every push to main (WTA-38).
+#
+# Deploy = ssh to the server with a key whose only allowed command is
+# app/deploy/ssh-entry.sh ("deploy <sha>"), which dumps the database, checks out the commit,
+# rebuilds, waits for /Health/ready and rolls back on failure. The smoke test then runs again
+# from GitHub, i.e. from outside, through DNS and TLS. Setup: docs/deployment.md "CI/CD".
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy this commit after the checks pass"
+        type: boolean
+        default: true
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: app
+    env:
+      # main.py refuses to start without it; tests never reach real services
+      AUTH_SECRET_KEY: ci-only-secret-key-ci-only-secret-key-ci-only-secret
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test settings (.env from the example)
+        working-directory: .
+        run: cp .env.example .env
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: app/uv.lock
+      - run: uv sync --frozen
+      - name: Chromium for Playwright
+        run: uv run playwright install --with-deps chromium
+      - run: uv run pytest -q
+      - name: Migrations match the models
+        run: |
+          docker compose --env-file ../.env -f docker-compose.yml up -d --wait postgres
+          uv run alembic upgrade head
+          uv run alembic check
+      - name: Integration test (API + worker + Postgres + Redis)
+        run: uv run pytest -m integration -q
+
+  frontend:
+    name: Frontend build and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  config:
+    name: Deploy config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell scripts
+        run: shellcheck -S warning app/deploy/*.sh
+      - name: Compose files (base + production overlay)
+        run: |
+          cp .env.example .env
+          printf 'REDIS_PASSWORD=ci\nDOMAIN=ci.example.com\n' >> .env
+          docker compose --env-file .env -f app/docker-compose.yml -f app/docker-compose.prod.yml config -q
+      - name: Caddyfile
+        run: |
+          docker run --rm -e DOMAIN=ci.example.com -v "$PWD/app/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+  deploy:
+    name: Deploy to production
+    needs: [backend, frontend, config]
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Deploy (server-side health check and automatic rollback)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes "root@$DEPLOY_HOST" "deploy $GITHUB_SHA"
+      - name: Smoke test from outside
+        run: bash app/deploy/smoke.sh "${{ vars.APP_URL }}"
