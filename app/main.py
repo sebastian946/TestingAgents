@@ -7,6 +7,7 @@ from config.variables import settings
 from observability import init_sentry
 from routes.auth_routes import router as auth_router
 from routes.billing_routes import router as billing_router
+from routes.health_routes import router as health_router
 from routes.routes import router
 from routes.run_routes import router as run_router
 from security.auth import MIN_SECRET_LENGTH
@@ -24,6 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(billing_router)
 app.include_router(router)
@@ -40,11 +42,6 @@ if len(settings.auth_secret_key) < MIN_SECRET_LENGTH or "change-me" in settings.
         "python -c \"import secrets; print(secrets.token_urlsafe(48))\"",
         stacklevel=1,
     )
-
-
-@app.get("/Health", summary="Health check endpoint")
-def root():
-    return {"message": "Health check ok", "status": "healthy"}
 
 
 if __name__ == "__main__":
