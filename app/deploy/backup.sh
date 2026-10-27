@@ -8,18 +8,15 @@
 # rsync) by whatever you add after the dump: a backup on the same disk is not a backup.
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/testing-agents}"
 KEEP_DAYS="${KEEP_DAYS:-14}"
 
-# DB_USER / DB_NAME come from the same .env docker compose uses
-set -a
-# shellcheck disable=SC1091
-. "$REPO_DIR/.env"
-set +a
+# The credentials come from the postgres container's own environment (POSTGRES_USER /
+# POSTGRES_DB, set from .env by compose). .env is not sourced: it is not valid bash
+# (EMAIL_FROM=Name <address> is a syntax error for `source`)
 
 mkdir -p "$BACKUP_DIR"
 file="$BACKUP_DIR/db-$(date +%F-%H%M).sql.gz"
-docker exec postgres_db pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$file"
+docker exec postgres_db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$file"
 find "$BACKUP_DIR" -name 'db-*.sql.gz' -mtime +"$KEEP_DAYS" -delete
 echo "$(date -Is) wrote $file ($(du -h "$file" | cut -f1))"
