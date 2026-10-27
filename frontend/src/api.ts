@@ -244,6 +244,7 @@ export const api = {
   resetPassword: (token: string, password: string) => request<Token>('POST', '/auth/password/reset', { token, password }),
   deleteAccount: (password: string) => request<void>('DELETE', '/auth/me', { password }),
   billing: () => request<BillingInfo>('GET', '/billing/me'),
+  checkout: (plan: string) => request<{ url: string }>('POST', '/billing/checkout', { plan }),
   cancelPlan: () => request<BillingInfo>('POST', '/billing/cancel'),
   resumePlan: () => request<BillingInfo>('POST', '/billing/resume'),
 

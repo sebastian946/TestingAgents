@@ -6,7 +6,7 @@ from config.plans import PLANS
 from config.variables import settings
 from db.conn import get_db
 from db.models_db.models_db import User
-from models.models import BillingInfo, PlanRead
+from models.models import BillingInfo, CheckoutRequest, PlanRead, RedirectUrl
 from security.auth import get_current_user
 from services import billing
 
@@ -39,6 +39,17 @@ def _info(db: Session, user: User) -> BillingInfo:
 @router.get("/me", response_model=BillingInfo, summary="The caller's plan, this month's usage and the upgrade links")
 def my_billing(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return _info(db, user)
+
+
+@router.post("/checkout", response_model=RedirectUrl, summary="A checkout URL for the caller and a paid plan")
+def start_checkout(payload: CheckoutRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """WTA-37: the dashboard redirects to the returned URL. Created per user through the
+    provider's API when it is configured, else the share link with the user's data appended."""
+    try:
+        return RedirectUrl(url=billing.create_checkout(db, user, payload.plan))
+    except billing.BillingError as exc:
+        code = status.HTTP_400_BAD_REQUEST if "cannot be purchased" in str(exc) else status.HTTP_503_SERVICE_UNAVAILABLE
+        raise HTTPException(status_code=code, detail=str(exc))
 
 
 @router.post("/cancel", response_model=BillingInfo, summary="Cancel the subscription at the end of the paid period")

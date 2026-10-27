@@ -86,6 +86,8 @@ class FakeProviderApi:
             status_code = api.status_code
 
             def json(self):
+                if url.endswith("/checkouts"):
+                    return {"data": {"type": "checkouts", "id": "chk-1", "attributes": {"url": "https://shop.lemonsqueezy.com/checkout/custom/chk-1"}}}
                 return {"data": {"type": "subscriptions", "id": url.rsplit("/", 1)[-1], "attributes": {
                     "status": api.status, "ends_at": api.ends_at, "renews_at": None,
                     "urls": {"customer_portal": "https://portal.example/sub-1"}}}}
@@ -179,6 +181,40 @@ def test_cancel_and_resume_from_our_ui(client, monkeypatch):
     method, url, _, body = fake.calls[-1]
     assert method == "PATCH" and body["data"]["attributes"] == {"cancelled": False}
     assert response.json()["status"] == "active" and response.json()["can_cancel"] is True
+
+
+def test_checkout_is_created_per_user_through_the_api_or_falls_back_to_the_share_link(client, monkeypatch):
+    # Share link only (no store id): email + user id appended, nothing created
+    fake = FakeProviderApi()
+    monkeypatch.setattr(billing.requests, "request", fake.request)
+    r = client.post("/billing/checkout", json={"plan": "pro"})
+    assert r.status_code == 200 and r.json()["url"].startswith("https://shop.lemonsqueezy.com/buy/pro?checkout[email]=")
+    assert f"checkout[custom][user_id]={client.user_id}" in r.json()["url"] and fake.calls == []
+    assert client.post("/billing/checkout", json={"plan": "starter"}).status_code == 503  # no link for starter here
+    assert client.post("/billing/checkout", json={"plan": "free"}).status_code == 400
+    assert client.post("/billing/checkout", json={"plan": "gold"}).status_code == 400
+
+    # With the store id: created through the Checkouts API with our data
+    monkeypatch.setattr(settings, "lemonsqueezy_store_id", "503029")
+    monkeypatch.setattr(settings, "app_url", "https://app.example")
+    r = client.post("/billing/checkout", json={"plan": "pro"})
+    assert r.status_code == 200 and r.json()["url"] == "https://shop.lemonsqueezy.com/checkout/custom/chk-1"
+    method, url, headers, body = fake.calls[-1]
+    assert method == "POST" and url.endswith("/checkouts") and headers["Authorization"] == "Bearer lsq-test-key"
+    attrs = body["data"]["attributes"]
+    assert attrs["checkout_data"]["custom"] == {"user_id": str(client.user_id)}
+    assert attrs["checkout_data"]["email"].endswith("@example.com")
+    assert attrs["product_options"]["redirect_url"] == "https://app.example/billing?checkout=success"
+    assert attrs["product_options"]["enabled_variants"] == [222]
+    assert body["data"]["relationships"] == {"store": {"data": {"type": "stores", "id": "503029"}},
+                                             "variant": {"data": {"type": "variants", "id": "222"}}}
+    # A returning customer is linked to their provider customer id
+    webhook(client, "subscription_created", client.user_id, variant="111")
+    client.post("/billing/checkout", json={"plan": "pro"})
+    assert fake.calls[-1][3]["data"]["attributes"]["checkout_data"]["custom"]["customer_id"] == "9"
+    # Provider error -> 503, never a half URL
+    monkeypatch.setattr(billing.requests, "request", FakeProviderApi(status_code=422).request)
+    assert client.post("/billing/checkout", json={"plan": "pro"}).status_code == 503
 
 
 def test_cancel_without_subscription_or_api_key_or_on_provider_error(client, monkeypatch):

@@ -16,7 +16,7 @@ import hashlib
 import hmac
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 import requests
@@ -47,6 +47,18 @@ def configured() -> bool:
 
 def api_configured() -> bool:
     return bool(settings.lemonsqueezy_api_key)
+
+
+def checkout_api_configured() -> bool:
+    return api_configured() and bool(settings.lemonsqueezy_store_id)
+
+
+def variant_for(plan_code: str) -> str | None:
+    return {"starter": settings.lemonsqueezy_variant_starter, "pro": settings.lemonsqueezy_variant_pro}.get(plan_code) or None
+
+
+def share_link_for(plan_code: str) -> str | None:
+    return {"starter": settings.lemonsqueezy_checkout_starter_url, "pro": settings.lemonsqueezy_checkout_pro_url}.get(plan_code) or None
 
 
 def _now() -> datetime:
@@ -250,3 +262,54 @@ def resume_subscription(db: Session, user: User) -> Subscription:
         json={"data": {"type": "subscriptions", "id": subscription.provider_subscription_id, "attributes": {"cancelled": False}}},
     )
     return _store_from_api(db, subscription, body)
+
+
+# ----------------------------------------------------------- per-user checkouts (WTA-37)
+
+CHECKOUT_TTL_HOURS = 24
+
+
+def create_checkout(db: Session, user: User, plan_code: str) -> str:
+    """A checkout URL for this user and plan. With the API key and the store id it is created
+    through the Checkouts API (email prefilled, our user id as custom data, brand color,
+    receipt button and redirect back to /billing); otherwise it is the product's share link
+    with the email and user id appended. Raises BillingError when the plan is not sold."""
+    variant = variant_for(plan_code)
+    if plan_code not in PLANS or PLANS[plan_code].price_usd == 0:
+        raise BillingError(f"The {plan_code!r} plan cannot be purchased.")
+    if not checkout_api_configured() or not variant:
+        link = checkout_url(share_link_for(plan_code), user)
+        if not link:
+            raise BillingError("Payments are not enabled on this server.")
+        return link
+    subscription = db_crud.get_subscription(db, user.id)
+    app_url = settings.app_url.rstrip("/")
+    expires = (_now() + timedelta(hours=CHECKOUT_TTL_HOURS)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    body = {"data": {
+        "type": "checkouts",
+        "attributes": {
+            "checkout_data": {"email": user.email, "custom": {"user_id": str(user.id)}},
+            "checkout_options": {"embed": False, "logo": True, "desc": True, "discount": True, "media": False,
+                                 "button_color": "#b8431a"},
+            "product_options": {
+                "enabled_variants": [int(variant)],
+                "redirect_url": f"{app_url}/billing?checkout=success",
+                "receipt_button_text": "Back to Tests Wise",
+                "receipt_link_url": f"{app_url}/billing",
+                "receipt_thank_you_note": "Your plan is active now. Create your next job from the dashboard.",
+            },
+            "expires_at": expires,
+            "preview": False,
+        },
+        "relationships": {
+            "store": {"data": {"type": "stores", "id": str(settings.lemonsqueezy_store_id)}},
+            "variant": {"data": {"type": "variants", "id": str(variant)}},
+        },
+    }}
+    if subscription and subscription.provider_customer_id:
+        body["data"]["attributes"]["checkout_data"]["custom"]["customer_id"] = str(subscription.provider_customer_id)
+    response = _api("POST", "/checkouts", json=body)
+    url = ((response.get("data") or {}).get("attributes") or {}).get("url")
+    if not url:
+        raise BillingError("The payment provider did not return a checkout URL.")
+    return url

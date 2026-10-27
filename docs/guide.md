@@ -445,7 +445,10 @@ allowance, the provider's status, and the hosted checkout links (with the user's
 id prefilled). `POST /jobs` answers `402` with `{message, plan, used, limit}` past the
 allowance. Payments go through Lemon Squeezy (a Merchant of Record, [ADR-09](adr/ADR-09-billing-merchant-of-record.md)):
 `POST /billing/webhook/lemonsqueezy` verifies the `X-Signature` HMAC on the raw body and
-upserts the user's `subscriptions` row (`services/billing.py`). `POST /billing/cancel` and
+upserts the user's `subscriptions` row (`services/billing.py`). `POST /billing/checkout {plan}` returns a checkout URL: created per user through the
+Checkouts API when `LEMONSQUEEZY_API_KEY` and `LEMONSQUEEZY_STORE_ID` are set (email, our
+user id as custom data, redirect back to `/billing?checkout=success`), else the plan's share
+link with the user's data appended (WTA-37). `POST /billing/cancel` and
 `POST /billing/resume` call the provider's API (`LEMONSQUEEZY_API_KEY`; DELETE cancels at the
 period end, PATCH `cancelled: false` resumes) and store the returned subscription at once;
 the webhook for the same change arrives later and is idempotent. `BillingInfo.can_cancel` /

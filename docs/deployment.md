@@ -119,9 +119,14 @@ first with **Test mode** on (toggle in the left sidebar), then again in live mod
    `subscription_cancelled`, `subscription_resumed`, `subscription_expired`,
    `subscription_paused`, `subscription_unpaused`, `subscription_payment_failed`,
    `subscription_payment_recovered`.
-5. **API key** (optional but recommended): Settings > API > **+**, name `tests-wise-api`,
-   copy the key into `LEMONSQUEEZY_API_KEY`. It lets users cancel or resume from our
-   Plan page (`POST /billing/cancel` / `/resume`); without it they only get the portal link.
+5. **API key and store id** (recommended): Settings > API > **+**, name `tests-wise-api`,
+   copy the key into `LEMONSQUEEZY_API_KEY`; Settings > Stores shows the store `#number`,
+   copy it into `LEMONSQUEEZY_STORE_ID`. Together they let users cancel or resume from
+   our Plan page (`POST /billing/cancel` / `/resume`) and make every checkout a per-user
+   one created through the Checkouts API (`POST /billing/checkout`: email prefilled, our
+   user id attached, brand color, "Back to Tests Wise" on the receipt and an automatic
+   redirect to `/billing?checkout=success`). Without them the share links of step 3 are
+   used as they are.
 6. **Pro free trial**: in the Pro product's variant, turn on "Subscription has free
    trial" with 7 days (`Plan.trial_days` in `config/plans.py` must match what the
    landing promises). The trial needs a card; the webhook reports `on_trial`, which
