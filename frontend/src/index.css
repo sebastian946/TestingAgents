@@ -267,7 +267,9 @@ textarea.input { height: auto; min-height: 88px; padding: var(--space-8) var(--s
   .menu-toggle { display: inline-flex; order: 2; }
   .header .btn-primary { order: 1; }
   .nav, .user-email, .header .btn-ghost:not(.menu-toggle) { display: none; }
-  .header.is-open .nav, .header.is-open .user-email, .header.is-open .btn-ghost { display: flex; order: 10; }
+  /* The open menu goes under the first row; the toggle itself stays in that row */
+  .header.is-open .nav, .header.is-open .user-email, .header.is-open .btn-ghost:not(.menu-toggle) { display: flex; order: 10; }
+  .header.is-open .user-email { flex: 1; min-width: 0; max-width: none; }
   .header.is-open .header-inner { padding-bottom: var(--space-12); }
   .header.is-open .nav { width: 100%; }
 }
@@ -333,6 +335,29 @@ textarea.input { height: auto; min-height: 88px; padding: var(--space-8) var(--s
 /* --------------------------------------------------------------------- Pages */
 .page { max-width: var(--container); margin: 0 auto; padding: var(--space-48) var(--space-24); }
 @media (max-width: 640px) { .page { padding: var(--space-24) var(--space-16); } }
+
+/* Phones (WTA-39) */
+@media (max-width: 640px) {
+  /* iOS Safari zooms into any field under 16px when it gets focus */
+  .input, .search input, .select, textarea.input { font-size: 16px; }
+  .hide-sm { display: none !important; }
+  .page-title { font-size: 30px; }
+  .table th, .table td { padding-left: var(--space-12); padding-right: var(--space-12); }
+  .table .url { max-width: 180px; }
+  .table-toolbar { padding: var(--space-12); }
+  .table-toolbar .search { width: 100%; }
+  .table-footer { padding: var(--space-12); }
+  .card { padding: var(--space-16); }
+  .card-header, .card-footer { margin: calc(-1 * var(--space-16)); padding: var(--space-12) var(--space-16); }
+  .card-header { margin-bottom: var(--space-16); }
+  .card-footer { margin-top: var(--space-16); }
+  .scenario summary { padding: var(--space-12) var(--space-16); }
+  .scenario-body { padding: var(--space-12) var(--space-16) var(--space-16); }
+  .site-footer { padding: var(--space-24) var(--space-16); align-items: center; row-gap: 0; }
+  .site-footer > * { display: inline-block; padding: var(--space-8) 0; }
+  .stat-value { font-size: 24px; }
+  .stat-value.is-small, .stat-value.tw-mono { font-size: 18px; line-height: 28px; }
+}
 .page-title { font-size: 36px; line-height: 1.11; font-weight: 600; letter-spacing: -.025em; margin: 0; }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); margin-bottom: var(--space-24); flex-wrap: wrap; }
 .section-title { font-size: 24px; line-height: 1.33; font-weight: 600; letter-spacing: -.025em; margin: 0 0 var(--space-12); }

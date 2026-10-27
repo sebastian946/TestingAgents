@@ -188,4 +188,53 @@ footer a { color: var(--ink-muted); }
   .band { padding: var(--space-48) 0; }
   .topbar .nav { display: none; }
 }
+.mobile-only { display: none; }
+
+/* Phones (WTA-39). Grid and flex children default to min-width:auto, so one wide element
+   (the hero's mock card, a nowrap row) used to push a 1fr column past the screen: every
+   grid here uses minmax(0, 1fr) and its children may shrink. */
+@media (max-width: 640px) {
+  .wrap { padding: 0 var(--space-16); }
+  .hero .wrap, .steps, .bento, .plans { grid-template-columns: minmax(0, 1fr); }
+  .hero .wrap > *, .bento > *, .steps > *, .plans > * { min-width: 0; }
+  .hero { padding: var(--space-32, 32px) 0 var(--space-48); }
+  h1.hero-title { font-size: 36px; margin-top: var(--space-16); }
+  .lead { font-size: 15px; }
+  .cta .btn-lg { flex: 1 1 auto; }
+  .mobile-only { display: block; }
+
+  /* One-row header: logo, language, one action. "Log in" moves under the hero buttons */
+  .topbar .wrap { flex-wrap: nowrap; gap: var(--space-8); min-height: 56px; padding-top: 0; padding-bottom: 0; }
+  .topbar .logo svg { width: 28px; height: 28px; }
+  .topbar .wordmark { font-size: 17px; }
+  .topbar .btn-primary, .topbar .btn-ghost { height: 32px; padding: 0 var(--space-12); font-size: 13px; }
+  .topbar a.btn-ghost[data-anon] { display: none; }
+  .lang button { height: 24px; padding: 0 8px; }
+  .who { padding: 0 4px; }
+
+  /* The hero's mock dashboard */
+  .frame { padding: var(--space-16); }
+  .frame .head { flex-wrap: wrap; row-gap: var(--space-8); }
+  .frame .host { font-size: 20px; }
+  .frame .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .frame .stat.in-card { padding: var(--space-8) var(--space-12); }
+  .frame .stat-value { font-size: 18px; white-space: nowrap; }
+  .scenario summary { padding: var(--space-12) var(--space-16); gap: var(--space-8); }
+  .scenario .code { min-width: 0; }
+
+  /* Bento mocks */
+  .bento .sheet { grid-template-columns: 54px minmax(0, 1fr) 68px; font-size: 10px; }
+  .bento .sheet span { padding: 5px 6px; }
+  .bento .verdicts > span { align-items: flex-start; }
+  .bento .verdicts .tw-mono { white-space: nowrap; }
+
+  .band { padding: var(--space-48) 0; }
+  .sub { margin-bottom: var(--space-24); }
+  .final h2.display { font-size: 28px; }
+  .final .btn-lg { width: 100%; }
+  footer .wrap { gap: var(--space-12); }
+  footer a { display: inline-block; padding: var(--space-8) 0; }
+}
+@media (max-width: 400px) { .topbar a.who { display: none !important; } }
+@media (max-width: 359px) { .topbar .wordmark { display: none; } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .badge-running .dot { animation: none; } }

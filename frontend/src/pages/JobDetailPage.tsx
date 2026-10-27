@@ -240,8 +240,8 @@ export function JobDetailPage() {
                   {choosing && <th style={{ width: 40 }} />}
                   <th>URL</th>
                   <th>Title</th>
-                  <th>Type</th>
-                  <th className="num">Scenarios</th>
+                  <th className="hide-sm">Type</th>
+                  <th className="num hide-sm">Scenarios</th>
                 </tr>
               </thead>
               <tbody>
@@ -263,8 +263,8 @@ export function JobDetailPage() {
                       </span>
                     </td>
                     <td>{page.title ?? '—'}</td>
-                    <td className="meta">{page.page_type ?? '—'}</td>
-                    <td className="num">{!choosing && job.select_pages && !page.selected ? <span className="meta">skipped</span> : scenarios.filter((s) => s.page_id === page.id).length}</td>
+                    <td className="meta hide-sm">{page.page_type ?? '—'}</td>
+                    <td className="num hide-sm">{!choosing && job.select_pages && !page.selected ? <span className="meta">skipped</span> : scenarios.filter((s) => s.page_id === page.id).length}</td>
                   </tr>
                 ))}
               </tbody>

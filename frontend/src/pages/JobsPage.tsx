@@ -89,7 +89,7 @@ export function JobsPage() {
               ))}
             </select>
             <span className="spacer" />
-            <Link to="/new" className="btn-primary btn-sm">
+            <Link to="/new" className="btn-primary btn-sm hide-sm">
               <svg viewBox="0 0 24 24">
                 <path d="M12 5v14M5 12h14" />
               </svg>
@@ -102,11 +102,11 @@ export function JobsPage() {
               <tr>
                 <th>Site</th>
                 <th>Status</th>
-                <th className="num">Pages</th>
-                <th className="num">Scenarios</th>
-                <th>Language</th>
-                <th>Created</th>
-                <th>Duration</th>
+                <th className="num hide-sm">Pages</th>
+                <th className="num hide-sm">Scenarios</th>
+                <th className="hide-sm">Language</th>
+                <th className="hide-sm">Created</th>
+                <th className="hide-sm">Duration</th>
               </tr>
             </thead>
             <tbody>
@@ -123,11 +123,11 @@ export function JobsPage() {
                   <td>
                     <StatusBadge status={job.status} />
                   </td>
-                  <td className="num">{job.pages_crawled}</td>
-                  <td className="num">{job.total_scenarios}</td>
-                  <td className="meta">{LANGUAGE_NAMES[job.language] ?? job.language}</td>
-                  <td className="meta">{formatDate(job.created_at)}</td>
-                  <td className="meta">{duration(job.started_at, job.finished_at)}</td>
+                  <td className="num hide-sm">{job.pages_crawled}</td>
+                  <td className="num hide-sm">{job.total_scenarios}</td>
+                  <td className="meta hide-sm">{LANGUAGE_NAMES[job.language] ?? job.language}</td>
+                  <td className="meta hide-sm">{formatDate(job.created_at)}</td>
+                  <td className="meta hide-sm">{duration(job.started_at, job.finished_at)}</td>
                 </tr>
               ))}
             </tbody>
