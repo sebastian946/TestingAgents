@@ -229,7 +229,7 @@ def _api(method: str, path: str, json: dict | None = None) -> dict:
         except (ValueError, AttributeError):
             pass
         print(f"[billing] provider {method} {path} -> HTTP {response.status_code}: {detail or 'no detail'}", flush=True)
-        suffix = f": {detail[:200]}" if detail else ""
+        suffix = f": {detail[:200].rstrip('.')}" if detail else ""
         raise BillingError(f"The payment provider refused the change (HTTP {response.status_code}){suffix}.")
     try:
         return response.json()
