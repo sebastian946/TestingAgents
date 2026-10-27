@@ -18,7 +18,22 @@ export function BillingPage() {
   const wanted = params.get('plan')
   const redirected = useRef(false)
   const [confirmCancel, setConfirmCancel] = useState(false)
-  const [busy, setBusy] = useState<'cancel' | 'resume' | null>(null)
+  const [busy, setBusy] = useState<'cancel' | 'resume' | string | null>(null)
+  const checkoutResult = params.get('checkout')
+
+  // WTA-37: the checkout URL is created per user by the API (name, email and our user id
+  // prefilled, back to this page after paying); the share link is the fallback
+  async function goToCheckout(plan: string) {
+    setError(null)
+    setBusy(plan)
+    try {
+      const { url } = await api.checkout(plan)
+      window.location.assign(url)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not open the payment page.')
+      setBusy(null)
+    }
+  }
 
   async function change(action: 'cancel' | 'resume') {
     setError(null)
@@ -44,11 +59,11 @@ export function BillingPage() {
   // checkout when it exists; otherwise fall through and explain why the button is missing
   useEffect(() => {
     if (!info || !wanted || redirected.current) return
-    const url = info.checkout_urls[wanted]
-    if (url && wanted !== info.plan.code) {
+    if (info.checkout_urls[wanted] && wanted !== info.plan.code) {
       redirected.current = true
-      window.location.assign(url)
+      void goToCheckout(wanted)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [info, wanted])
 
   if (error && !info) return <ErrorBox message={error} />
@@ -64,6 +79,16 @@ export function BillingPage() {
         <h1 className="page-title">Plan and usage</h1>
       </div>
 
+      {checkoutResult === 'success' && (
+        <div style={{ marginBottom: 'var(--space-16)' }}>
+          <Notice variant="success">
+            Thank you! Your plan is active as soon as the payment is confirmed, usually within seconds.{' '}
+            <button type="button" className="link" onClick={() => window.location.assign('/billing')}>
+              Refresh
+            </button>
+          </Notice>
+        </div>
+      )}
       {wantedPlan && wantedPlan.code === info.plan.code && (
         <div style={{ marginBottom: 'var(--space-16)' }}>
           <Notice variant="success">You are already on the {wantedPlan.name} plan.</Notice>
@@ -73,7 +98,9 @@ export function BillingPage() {
         <div style={{ marginBottom: 'var(--space-16)' }}>
           <Notice variant="info">
             Opening the payment page for {wantedPlan.name}…{' '}
-            <a href={info.checkout_urls[wantedPlan.code]}>Click here if it does not open.</a>
+            <button type="button" className="link" onClick={() => goToCheckout(wantedPlan.code)}>
+              Click here if it does not open.
+            </button>
           </Notice>
         </div>
       )}
@@ -173,9 +200,15 @@ export function BillingPage() {
                   Current plan
                 </button>
               ) : checkout ? (
-                <a href={checkout} className={plan.code === 'starter' ? 'btn-primary' : 'btn-outline'} style={{ marginTop: 'auto' }}>
-                  {plan.trial_days > 0 && !info.status ? `Try free for ${plan.trial_days} days` : plan.price_usd > info.plan.price_usd ? 'Upgrade' : 'Switch'}
-                </a>
+                <button
+                  type="button"
+                  className={plan.code === 'starter' ? 'btn-primary' : 'btn-outline'}
+                  style={{ marginTop: 'auto' }}
+                  onClick={() => goToCheckout(plan.code)}
+                  disabled={busy !== null}
+                >
+                  {busy === plan.code ? 'Opening…' : plan.trial_days > 0 && !info.status ? `Try free for ${plan.trial_days} days` : plan.price_usd > info.plan.price_usd ? 'Upgrade' : 'Switch'}
+                </button>
               ) : plan.price_usd > 0 && !billingConfigured ? (
                 <p className="help" style={{ marginTop: 'auto' }}>
                   Opens in a few days. <a href="mailto:hola@tests-wise.com?subject=Early%20access">Ask for early access</a>.

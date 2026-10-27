@@ -70,6 +70,14 @@ class BillingInfo(BaseModel):
     checkout_urls: dict[str, str] = Field(description="Hosted checkout per plan code, when billing is configured")
 
 
+class CheckoutRequest(BaseModel):
+    plan: str = Field(..., pattern="^[a-z]+$")
+
+
+class RedirectUrl(BaseModel):
+    url: str
+
+
 class EmailRequest(BaseModel):
     """Body of POST /auth/password/forgot."""
 
