@@ -36,7 +36,7 @@ jobs:
       # main.py refuses to start without it; tests never reach real services
       AUTH_SECRET_KEY: ci-only-secret-key-ci-only-secret-key-ci-only-secret
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Test settings (.env from the example)
         working-directory: .
         run: cp .env.example .env
@@ -64,7 +64,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -79,7 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Shell scripts
         run: shellcheck -S warning app/deploy/*.sh
       - name: Compose files (base + production overlay)
@@ -107,7 +107,7 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: SSH key
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
